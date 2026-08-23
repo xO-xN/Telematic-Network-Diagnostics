@@ -1,0 +1,124 @@
+name: Package release
+
+# The release artifact is a `.pnds` bundle (PNDS Project Bundle
+# Specification §2: one project root + a top-level pnds-bundle.json, zip
+# deflate) — the canonical distribution format for every PNDS project.
+#
+# PNDS App never runs an install step during a performance, so a released
+# score project has to ship its production dependencies already installed.
+#
+# The bundle is assembled from an explicit ALLOWLIST rather than by
+# excluding unwanted paths: anything not named below (docs, tests,
+# SuperCollider sources, CI config) stays out of the performance bundle by
+# construction.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag to package (e.g. v0.1.0)'
+        required: true
+        type: string
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ github.ref_type == 'tag' && github.ref_name || inputs.version }}
+      BUNDLE: dist/PNDS Template
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Matches the Node runtime range declared in package.json.
+          node-version: '24.18.1'
+
+      - name: Install production dependencies
+        run: npm ci --omit=dev
+
+      - name: Assemble runnable project bundle
+        run: |
+          mkdir -p "$BUNDLE/supercollider"
+          cp manifest.json package.json server.js "$BUNDLE/"
+          cp -R lib audio public node_modules "$BUNDLE/"
+          cp -R supercollider/synthdefs "$BUNDLE/supercollider/"
+          cp .github/bundle/README.md "$BUNDLE/README.md"
+          find "$BUNDLE" -name '.DS_Store' -delete
+          find "$BUNDLE" -name '.lh' -type d -prune -exec rm -rf {} +
+
+      - name: Verify bundle contents
+        run: |
+          node -e '
+            const fs = require("fs");
+            const deps = Object.keys(require("./package.json").dependencies);
+            const missing = deps.filter(
+              d => !fs.existsSync(`${process.env.BUNDLE}/node_modules/${d}`)
+            );
+            if (missing.length) {
+              throw new Error("missing from bundle: " + missing.join(", "));
+            }
+            console.log(`all ${deps.length} production dependencies present`);
+          '
+          for f in docs test .github .git supercollider/source supercollider/debug \
+                   .gitignore package-lock.json; do
+            if [ -e "$BUNDLE/$f" ]; then
+              echo "::error::$f must not be in the performance bundle"
+              exit 1
+            fi
+          done
+          echo "--- bundle contents ---"
+          find "$BUNDLE" -maxdepth 2 -not -path '*/node_modules/*' | sort
+
+      - name: Smoke-test the bundle
+        run: |
+          cd "$BUNDLE"
+          node server.js --audio-mode none &
+          SERVER_PID=$!
+          for _ in 1 2 3 4 5 6 7 8 9 10; do
+            sleep 1
+            if curl -sf http://127.0.0.1:6868/__pnds/health -o /tmp/health.json; then
+              break
+            fi
+          done
+          cat /tmp/health.json
+          grep -q '"status":"ready"' /tmp/health.json
+          kill "$SERVER_PID"
+
+      - name: Create .pnds bundle
+        run: |
+          cat > dist/pnds-bundle.json <<EOF
+          {
+            "formatVersion": 1,
+            "packedWith": "${VERSION}",
+            "packedAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "sourcePlatform": "$(echo "${RUNNER_OS}-${RUNNER_ARCH}" | tr '[:upper:]' '[:lower:]')"
+          }
+          EOF
+          cd dist && zip -q -r -X "../PNDS-Template-${VERSION}.pnds" "PNDS Template" pnds-bundle.json
+          cd .. && ls -lh "PNDS-Template-${VERSION}.pnds"
+
+      - name: Create draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.VERSION }}
+          name: PNDS Template ${{ env.VERSION }}
+          draft: true
+          files: PNDS-Template-*.pnds
+          body: |
+            A PNDS score project skeleton with minimal working features.
+
+            > [!IMPORTANT]
+            > Download **`PNDS-Template-${{ env.VERSION }}.pnds`** from the Assets below.
+            >
+            > Do **not** download "Source code (zip)" or "Source code (tar.gz)",
+            > and do not use the green "Code → Download ZIP" button. Those contain
+            > the source only, without the installed Node.js dependencies.
+            >
+            > The `.pnds` bundle installs directly into PNDS App: double-click it
+            > (or press ⌘O in the App). It unpacks the `PNDS Template` project with
+            > its `node_modules` directory ready to run.

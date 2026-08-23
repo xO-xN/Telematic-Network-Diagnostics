@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="user-scalable=no, initial-scale=1, maximum-scale=1, viewport-fit=cover"
+    />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+
+    <title>PNDS Template</title>
+
+    <link rel="stylesheet" type="text/css" href="style.css" />
+
+    <script src="__config.js"></script>
+    <script src="shared.js"></script>
+    <script src="client.js"></script>
+    <script>
+      // Single page, two roles: the performer port serves the touch UI,
+      // the monitor port serves the operator view.
+      window.PNDS_IS_MONITOR =
+        window.location.port === String(window.PNDS.monitorPort);
+
+      // Socket.IO is served by the performer server; the monitor page loads
+      // it cross-port. No CDN: performances run offline. The origin comes
+      // from client.js — the single owner of the performer-server URL.
+      document.write(
+        '\x3Cscript src="' +
+          window.PNDSClient.socketOrigin({
+            hostname: location.hostname,
+            port: window.PNDS.performerPort,
+          }) +
+          '/socket.io/socket.io.js"\x3E\x3C/script\x3E',
+      );
+
+      // Both roles (performer touch UI and monitor) draw with p5.
+      document.write(
+        '\x3Cscript src="libraries/p5.min.js"\x3E\x3C/script\x3E',
+      );
+    </script>
+  </head>
+
+  <body>
+    <div id="rotate-overlay" class="hidden">
+      <p>请旋转设备至横屏</p>
+      <p>Rotate your device to landscape</p>
+    </div>
+
+    <main id="stage"></main>
+
+    <script>
+      if (window.PNDS_IS_MONITOR) {
+        // Theme following (spec §5.3): the monitor page follows the App's
+        // pushed theme. This page draws with p5 (no CSS variables), so it
+        // consumes the palette through the onTheme callback instead —
+        // monitor.js defines window.applyPndsTheme and reads the THEME
+        // values every frame. The options global must exist before the
+        // module loads.
+        window.PNDS_THEME_OPTIONS = {
+          applyVariables: false,
+          onTheme: function (name, palette) {
+            window.PNDS_LAST_THEME = { name: name, palette: palette };
+            if (typeof window.applyPndsTheme === 'function') {
+              window.applyPndsTheme(name, palette);
+            }
+          },
+        };
+        document.write(
+          '\x3Cscript src="/__pnds/theme-follow.js"\x3E\x3C/script\x3E',
+        );
+        document.write('\x3Cscript src="monitor.js"\x3E\x3C/script\x3E');
+      } else {
+        document.write('\x3Cscript src="performer.js"\x3E\x3C/script\x3E');
+      }
+    </script>
+  </body>
+</html>

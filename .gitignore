@@ -1,0 +1,6 @@
+node_modules/
+.lh/
+.DS_Store
+*.log
+.pnds-seats.json
+.pnds-seats.json.tmp
