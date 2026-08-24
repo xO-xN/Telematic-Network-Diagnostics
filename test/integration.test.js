@@ -6,6 +6,8 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 const { spawn } = require("node:child_process");
+const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 
 const { io } = require("socket.io-client");
@@ -24,7 +26,7 @@ const MONITOR_URL = "http://127.0.0.1:6869";
 const HEALTH_URL = `${PERFORMER_URL}/__pnds/health`;
 const HUB_TOKEN = "integration-hub-token-0123456789";
 
-function waitForHealthReady() {
+function waitForHealthAt(healthUrl) {
   return new Promise((resolve, reject) => {
     let attempts = 0;
 
@@ -32,7 +34,7 @@ function waitForHealthReady() {
       attempts += 1;
 
       try {
-        const response = await fetch(HEALTH_URL);
+        const response = await fetch(healthUrl);
         const payload = await response.json();
 
         if (payload.status === "ready") {
@@ -53,6 +55,10 @@ function waitForHealthReady() {
 
     tick();
   });
+}
+
+function waitForHealthReady() {
+  return waitForHealthAt(HEALTH_URL);
 }
 
 
@@ -310,4 +316,172 @@ test("hub leg: env auto-connect, live stats, burst, disconnect/reconnect, form c
   assert.match(monitorJs, /storageKeys/, "storage key comes from shared.js");
   assert.match(monitorJs, /autoConfig/, "auto-start uses the loaded config");
   assert.match(monitorJs, /state\.env/, "env prefill is wired");
+});
+
+// ------------------------------------------------------------
+// Flower view end to end (issue #4): two project instances + hub.
+// The second instance is a real copy of the project with its own
+// manifest ports — literally "two deployments on one machine", the
+// same shape as two sites in production.
+// ------------------------------------------------------------
+
+const SITE_B_PERFORMER = 16868;
+const SITE_B_MONITOR = 16869;
+
+async function makeSecondInstance() {
+  const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "tnd-site-"));
+
+  await fs.promises.cp(PROJECT_ROOT, dir, {
+    recursive: true,
+    filter: (source) => {
+      const relative = path.relative(PROJECT_ROOT, source);
+
+      return (
+        relative === "" ||
+        !(relative === "node_modules" || relative.startsWith("node_modules/") ||
+          relative === ".git" || relative.startsWith(".git/"))
+      );
+    },
+  });
+
+  const manifestPath = path.join(dir, "manifest.json");
+  const manifest = JSON.parse(await fs.promises.readFile(manifestPath, "utf8"));
+
+  manifest.scoreServer.performerPort = SITE_B_PERFORMER;
+  manifest.scoreServer.monitorPort = SITE_B_MONITOR;
+  await fs.promises.writeFile(manifestPath, JSON.stringify(manifest, null, 2));
+
+  // Dependencies resolve through the real install (a copy would be
+  // 50+ MB for nothing).
+  await fs.promises.symlink(
+    path.join(PROJECT_ROOT, "node_modules"),
+    path.join(dir, "node_modules"),
+    "dir",
+  );
+
+  return dir;
+}
+
+function spawnServer(cwd, { nodeId, hubPort }) {
+  return spawn(process.execPath, ["server.js"], {
+    cwd,
+    stdio: "ignore",
+    env: {
+      ...process.env,
+      PNDS_HUB_URL: `http://127.0.0.1:${hubPort}`,
+      PNDS_HUB_TOKEN: HUB_TOKEN,
+      PNDS_HUB_ROOM: "rehearsal",
+      PNDS_NODE_ID: nodeId,
+    },
+  });
+}
+
+function connectMonitorAt(url) {
+  return new Promise((resolve, reject) => {
+    const socket = io(url, { reconnection: false, timeout: 5000 });
+    const timer = setTimeout(() => {
+      socket.close();
+      reject(new Error("monitor connect timeout"));
+    }, 5000);
+
+    socket.on("connect", () => {
+      clearTimeout(timer);
+      resolve(socket);
+    });
+
+    socket.on("connect_error", (error) => {
+      clearTimeout(timer);
+      socket.close();
+      reject(error);
+    });
+  });
+}
+
+test("flower view: two instances see each other, overall follows the worst node", async (t) => {
+  await assertPortsFree([6868, 6869, SITE_B_PERFORMER, SITE_B_MONITOR]);
+
+  const hubPort = await findFreePort();
+  const hub = spawnHub(hubPort, { token: HUB_TOKEN });
+  t.after(() => stopProcess(hub));
+  await waitForPort(hubPort);
+
+  const siteBDir = await makeSecondInstance();
+  t.after(async () => fs.promises.rm(siteBDir, { recursive: true, force: true }));
+
+  const serverA = spawnServer(PROJECT_ROOT, { nodeId: "site-a", hubPort });
+  t.after(async () => stopProcess(serverA));
+
+  let serverB = spawnServer(siteBDir, { nodeId: "site-b", hubPort });
+  t.after(async () => stopProcess(serverB));
+
+  await waitForHealthAt(HEALTH_URL);
+  await waitForHealthAt(`http://127.0.0.1:${SITE_B_PERFORMER}/__pnds/health`);
+
+  const monitorA = await connectMonitorAt(PERFORMER_URL);
+  const monitorB = await connectMonitorAt(`http://127.0.0.1:${SITE_B_PERFORMER}`);
+  t.after(() => monitorA.close());
+  t.after(() => monitorB.close());
+
+  // --- both monitors see BOTH nodes, overall green ---
+  const green = waitForHubState(
+    monitorA,
+    (state) =>
+      state.leg &&
+      state.leg.peers["site-b"] &&
+      state.leg.peers["site-b"].connected &&
+      state.overall &&
+      state.overall.status === "green",
+    25000,
+  );
+  const greenB = waitForHubState(
+    monitorB,
+    (state) =>
+      state.leg &&
+      state.leg.peers["site-a"] &&
+      state.leg.peers["site-a"].connected &&
+      state.overall &&
+      state.overall.status === "green",
+    25000,
+  );
+
+  const [stateA, stateB] = await Promise.all([green, greenB]);
+
+  // The relayed stats carry the peer's live numbers (the derived
+  // site-pair sums them in the page).
+  assert.equal(typeof stateA.leg.peers["site-b"].summary.rttP50, "number");
+  assert.equal(typeof stateB.leg.peers["site-a"].summary.rttP50, "number");
+  assert.equal(stateA.leg.peers["site-b"].performerCount, 0, "no performer data until #5");
+  assert.equal(stateA.leg.peers["site-b"].localWorst, null, "no local data until #5");
+  assert.equal(stateA.overall.attributionNodeId, stateA.config.nodeId);
+
+  // --- one side drops: the other side's overall turns red, attributed ---
+  await stopProcess(serverB);
+
+  const down = await waitForHubState(
+    monitorA,
+    (state) =>
+      state.leg &&
+      state.leg.peers["site-b"] &&
+      !state.leg.peers["site-b"].connected &&
+      state.overall &&
+      state.overall.status === "red",
+    20000,
+  );
+
+  assert.equal(down.overall.attributionNodeId, "site-b");
+  assert.equal(down.overall.attributionSelf, false);
+
+  // --- it comes back: the network returns to green ---
+  serverB = spawnServer(siteBDir, { nodeId: "site-b", hubPort });
+
+  await waitForHubState(
+    monitorA,
+    (state) =>
+      state.leg &&
+      state.leg.peers["site-b"] &&
+      state.leg.peers["site-b"].connected &&
+      state.overall &&
+      state.overall.status === "green",
+    25000,
+  );
 });

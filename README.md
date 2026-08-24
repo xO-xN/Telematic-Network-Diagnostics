@@ -28,14 +28,17 @@ audio mode `none` only.
 
 v0.1.0 base (issue #2): the de-templatized score server (performer /
 monitor dual server, health, theme following) and the deployable hub.
-Hub leg + monitor connect form (issue #3) landed: the score server
-connects out to the hub (env or form), measures the hub leg
-continuously — the automatic probe cycle matches the local leg's
-rhythm (2 s burst at 30 msg/s ↔ 2 s calm at 1 Hz, no buttons) — and
-the monitor shows live RTT p50/p95, the quality color (jitter/loss/
-reconnects — latency never colors), the one-way estimate ≈ RTT/2 and
-the event log. The flower view and the local leg land with issues
-#4–#5.
+Hub leg + monitor connect form (issue #3) and the flower view
+(issue #4) landed: the score server connects out to the hub (env or
+form) and measures the hub leg continuously — the automatic probe
+cycle matches the local leg's rhythm (2 s burst at 30 msg/s ↔ 2 s
+calm at 1 Hz, no buttons). Every node relays its rolling stats
+through the hub room, so each site's monitor shows the same picture:
+an overall "suitable for performance" banner with fault attribution,
+an inline-SVG star diagram (spokes = hub legs with RTT p50 labels and
+quality colors, dashed when offline; outer rings = local legs, gray
+until #5), per-node cards with derived site-pair end-to-end numbers
+(big number + composition formula). The local leg lands with #5.
 
 ### Quick start
 
@@ -109,11 +112,14 @@ SuperCollider：工程仅以 audio mode `none` 运行。
 
 v0.1.0 基础（issue #2）：去模板化后的 score server（performer /
 monitor 双 server、health、主题跟随）+ 可部署的 hub。hub 腿测量 +
-monitor 连接表单（issue #3）已落地：score server 出站连接 hub（env 或
-表单），持续测量 hub 腿——探测节奏与本地腿一致（2 秒 30 msg/s 突发 ↔
-2 秒 1 Hz 平静自动交替，无任何按钮），monitor 实时显示 RTT p50/p95、质
-量色（抖动/丢包/重连——延迟不参与染色）、单程估计 ≈ RTT/2 与事件日志。
-花视图与本地腿随 issue #4–#5 落地。
+monitor 连接表单（issue #3）与花视图（issue #4）已落地：score server
+出站连接 hub（env 或表单），以与本地腿一致的节奏持续测量（2 秒
+30 msg/s 突发 ↔ 2 秒 1 Hz 平静自动交替，无任何按钮）。各节点把滚动统
+计经 hub 房间中继互达，每个站点的 monitor 看到同一份画面：全网
+"适宜演奏"横幅（取最差 + 故障归属定位）、内联 SVG 星型图（辐条 = hub
+腿，标注 RTT p50、质量色，断线虚线；外环 = 本地腿，#5 前为灰）、每节
+点卡片与推导站点对端到端数字（大数字 + 小字构成式）。本地腿随 #5 落
+地。
 
 ### 快速开始
 

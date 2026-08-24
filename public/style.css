@@ -142,9 +142,90 @@ header .sub {
   color: var(--st);
 }
 
+.attribution {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--accent-soft);
+  border-radius: 999px;
+  padding: 2px 10px;
+}
+
 /* ------------------------------------------------------------
- * Node card (monitor)
+ * Star diagram (monitor, issue #4) — pure inline SVG, no deps
  * ------------------------------------------------------------ */
+
+.star-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.star-svg {
+  width: min(360px, 100%);
+  height: auto;
+}
+
+.hub-core {
+  fill: var(--accent-soft);
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.hub-label {
+  fill: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-anchor: middle;
+}
+
+.spoke {
+  stroke: var(--st);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+
+.spoke-label {
+  fill: var(--text);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.node-ring {
+  fill: var(--card);
+  stroke: var(--st);
+  stroke-width: 4;
+}
+
+.node-core {
+  stroke: none;
+  fill: var(--st);
+}
+
+.node-name {
+  fill: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.self-badge {
+  fill: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* ------------------------------------------------------------
+ * Node cards (monitor)
+ * ------------------------------------------------------------ */
+
+#cards {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  width: min(960px, 100%);
+}
 
 .client-card {
   display: flex;
@@ -154,7 +235,7 @@ header .sub {
   border: 1px solid var(--track);
   border-radius: 10px;
   padding: 10px 14px 12px;
-  width: min(360px, 100%);
+  width: 250px;
   box-shadow: 0 1px 3px rgba(23, 26, 43, 0.06);
   border-left: 3px solid var(--st);
 }
@@ -169,6 +250,15 @@ header .sub {
 
 .client-card .head .dot {
   background: var(--st);
+}
+
+.client-card .tag {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 999px;
+  padding: 1px 7px;
 }
 
 .client-card .status-word {
@@ -187,6 +277,31 @@ header .sub {
   font-size: 11px;
   color: var(--muted);
   min-height: 14px;
+}
+
+.client-card .derived {
+  border-top: 1px solid var(--track);
+  margin-top: 4px;
+  padding-top: 6px;
+  margin-bottom: 4px;
+}
+
+.client-card .derived-k {
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.client-card .derived .big {
+  font-size: 22px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.client-card .derived .formula {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .client-card .row {

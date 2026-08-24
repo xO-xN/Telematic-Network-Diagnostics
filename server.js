@@ -37,6 +37,7 @@ const { resolveHostLanIp } = require("./lib/network");
 const { HealthTracker } = require("./lib/health");
 const { qrHandler } = require("./lib/qr");
 const { HubLeg } = require("./lib/hub-leg");
+const { overallFromNodes } = require("./lib/flower");
 const {
   attachShutdown,
   closeHttpServer,
@@ -242,6 +243,27 @@ function configureHubLeg({ url, token, room, nodeId }) {
 function hubStateSnapshot() {
   const leg = hubLeg ? hubLeg.snapshot() : null;
 
+  // The flower view's overall: worst hub leg across every known node
+  // (own + peers), with fault attribution naming the offender. Local
+  // legs join the verdict when #5 starts reporting them.
+  let overall = null;
+
+  if (leg) {
+    const nodes = [
+      {
+        nodeId: activeConfig ? activeConfig.nodeId : null,
+        status: leg.connected ? leg.status : "red",
+        isSelf: true,
+      },
+    ];
+
+    for (const [nodeId, peer] of Object.entries(leg.peers || {})) {
+      nodes.push({ nodeId, status: peer.status, isSelf: false });
+    }
+
+    overall = overallFromNodes(nodes);
+  }
+
   return {
     configured: Boolean(hubLeg),
     config: activeConfig
@@ -256,6 +278,7 @@ function hubStateSnapshot() {
     // for the form prefill (LAN trust model, same as the form itself).
     env: envHub,
     leg,
+    overall,
   };
 }
 

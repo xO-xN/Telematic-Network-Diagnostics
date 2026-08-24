@@ -421,3 +421,122 @@ test("HubLeg: stop closes the socket and clears pending probes", async () => {
   assert.equal(snapshot.connected, false);
   assert.equal(snapshot.status, STATUS.RED);
 });
+
+// ------------------------------------------------------------
+// Flower-view data chain (issue #4): announce + peers roster
+// ------------------------------------------------------------
+
+function statsBodyFrom(from, overrides = {}) {
+  return {
+    type: "tnd-stats",
+    from,
+    connected: true,
+    probing: "calm",
+    status: "green",
+    reason: "Link quality good",
+    summary: { rttP50: 41, rttP95: 55, samples: 20 },
+    performerCount: 3,
+    localWorst: null,
+    ...overrides,
+  };
+}
+
+test("HubLeg: announces own stats into the room while connected", async () => {
+  const socket = new FakeSocket({ echoLatencyMs: 0 });
+  const leg = makeLeg(socket, { announceIntervalMs: 5 });
+
+  leg.start();
+  socket.deliver("connect");
+  await delay(15);
+
+  const announces = socket.sent.filter(([event]) => event === "relay");
+
+  assert.ok(announces.length >= 2, `expected periodic announces, got ${announces.length}`);
+
+  const body = announces[0][1];
+
+  assert.equal(body.type, "tnd-stats");
+  assert.equal(body.node, "site-a");
+  assert.equal(body.connected, true);
+  assert.equal(typeof body.status, "string");
+  assert.equal(body.summary && typeof body.summary.rttP50, "number");
+  assert.equal(body.performerCount, 0, "no performer data until #5");
+  assert.equal(body.localWorst, null, "no local data until #5");
+
+  leg.stop();
+});
+
+test("HubLeg: site-level fields come from the injected getters (#5's plug points)", async () => {
+  const socket = new FakeSocket({ echoLatencyMs: 0 });
+  const leg = makeLeg(socket, {
+    announceIntervalMs: 5,
+    performerCount: () => 4,
+    localWorst: () => "yellow",
+  });
+
+  leg.start();
+  socket.deliver("connect");
+  await delay(10);
+
+  const announce = socket.sent.find(([event]) => event === "relay");
+
+  assert.equal(announce[1].performerCount, 4);
+  assert.equal(announce[1].localWorst, "yellow");
+
+  leg.stop();
+});
+
+test("HubLeg: relayed peer stats land in the roster; foreign types ignored", () => {
+  const socket = new FakeSocket();
+  const leg = makeLeg(socket);
+
+  leg.start();
+  socket.deliver("connect");
+
+  socket.deliver("relay", statsBodyFrom("site-b", { status: "yellow", reason: "Jitter (IQR) 15.0 ms ≥ 10 ms" }));
+  socket.deliver("relay", { type: "something-else", from: "site-x" });
+  socket.deliver("relay", { type: "tnd-stats" }); // no from — dropped
+
+  const snapshot = leg.snapshot();
+
+  assert.ok(snapshot.peers["site-b"], "the peer lands in the roster");
+  assert.equal(snapshot.peers["site-b"].status, "yellow");
+  assert.equal(snapshot.peers["site-b"].reason, "Jitter (IQR) 15.0 ms ≥ 10 ms");
+  assert.equal(snapshot.peers["site-b"].summary.rttP50, 41);
+  assert.equal(snapshot.peers["site-b"].performerCount, 3);
+  assert.equal(snapshot.peers["site-b"].connected, true);
+  assert.equal(snapshot.peers["site-x"], undefined, "foreign relay types are ignored");
+
+  leg.stop();
+});
+
+test("HubLeg: a silent peer goes offline, then is pruned from the roster", () => {
+  let clock = 100000;
+  const socket = new FakeSocket();
+  const leg = makeLeg(socket, {
+    now: () => clock,
+    peerOfflineMs: 5000,
+    peerPruneMs: 30000,
+  });
+
+  leg.start();
+  socket.deliver("connect");
+  socket.deliver("relay", statsBodyFrom("site-b"));
+
+  assert.equal(leg.snapshot().peers["site-b"].connected, true);
+
+  clock += 5001; // past the offline threshold
+  const offline = leg.snapshot().peers["site-b"];
+
+  assert.equal(offline.connected, false, "5 s of silence → shown offline");
+  assert.ok(offline.agoMs >= 5000);
+
+  clock += 25001; // past the prune threshold
+  assert.equal(
+    leg.snapshot().peers["site-b"],
+    undefined,
+    "30 s of silence → pruned from the roster",
+  );
+
+  leg.stop();
+});
