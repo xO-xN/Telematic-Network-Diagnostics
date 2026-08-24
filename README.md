@@ -28,8 +28,13 @@ audio mode `none` only.
 
 v0.1.0 base (issue #2): the de-templatized score server (performer /
 monitor dual server, health, theme following) and the deployable hub.
-The hub-leg measurement, the flower view and the local-leg diagnostics
-land with issues #3–#5.
+Hub leg + monitor connect form (issue #3) landed: the score server
+connects out to the hub (env or form), measures the hub leg
+continuously (1 Hz echo baseline, on-demand 30 msg/s bursts) and the
+monitor shows live RTT p50/p95, the quality color (jitter/loss/
+reconnects — latency never colors), the one-way estimate ≈ RTT/2 and
+the event log. The flower view and the local leg land with issues
+#4–#5.
 
 ### Quick start
 
@@ -46,6 +51,24 @@ HUB_TOKEN=$(openssl rand -hex 24) HUB_PORT=4000 npm run hub
 
 Deployment guide (systemd, Caddy + wss, bare-ws quick path):
 [`docs/hub-deployment.md`](docs/hub-deployment.md).
+
+### Hub connection (env contract — frozen, App v1.3.0)
+
+The score server connects to the hub through either channel; both feed
+one path, and a form submission replaces the env config:
+
+| Env var | Meaning | Default |
+| --- | --- | --- |
+| `PNDS_HUB_URL` | Hub URL (never carries the token), e.g. `wss://hub.example.com` | — |
+| `PNDS_HUB_TOKEN` | Shared secret (independent env var — never in the URL, so it stays out of logs) | — |
+| `PNDS_HUB_ROOM` | Room name | `"default"` |
+| `PNDS_NODE_ID` | This node's display name | host name |
+
+With the env present at boot the server auto-connects without opening
+the monitor. The monitor form (hub URL / token / room / node name)
+persists in the browser's localStorage and prefills from the env; a
+saved form value wins over the env default. Opening the monitor
+auto-starts measuring — zero buttons.
 
 ### Structure
 
@@ -84,8 +107,11 @@ SuperCollider：工程仅以 audio mode `none` 运行。
 ### 状态
 
 v0.1.0 基础（issue #2）：去模板化后的 score server（performer /
-monitor 双 server、health、主题跟随）+ 可部署的 hub。hub 腿测量、花
-视图与本地腿诊断随 issue #3–#5 落地。
+monitor 双 server、health、主题跟随）+ 可部署的 hub。hub 腿测量 +
+monitor 连接表单（issue #3）已落地：score server 出站连接 hub（env 或
+表单），持续测量 hub 腿（1 Hz echo 基线 + 按需 30 msg/s 突发），monitor
+实时显示 RTT p50/p95、质量色（抖动/丢包/重连——延迟不参与染色）、单程
+估计 ≈ RTT/2 与事件日志。花视图与本地腿随 issue #4–#5 落地。
 
 ### 快速开始
 
@@ -102,6 +128,22 @@ HUB_TOKEN=$(openssl rand -hex 24) HUB_PORT=4000 npm run hub
 
 部署指南（systemd、Caddy + wss、裸 ws 快速路径）：
 [`docs/hub-deployment.md`](docs/hub-deployment.md)。
+
+### hub 连接（env 契约——已冻结，App v1.3.0）
+
+score server 经两条通道之一连接 hub；两条通道汇入同一条路径，表单提交
+会替换 env 配置：
+
+| 环境变量 | 含义 | 缺省 |
+| --- | --- | --- |
+| `PNDS_HUB_URL` | hub 地址（不含 token），如 `wss://hub.example.com` | — |
+| `PNDS_HUB_TOKEN` | 共享密钥（独立 env——绝不拼进 URL，避免泄进日志） | — |
+| `PNDS_HUB_ROOM` | 房间名 | `"default"` |
+| `PNDS_NODE_ID` | 本节点显示名 | 主机名 |
+
+env 在启动时存在即自动连接，无需打开 monitor。monitor 表单（hub URL /
+token / room / 节点名）持久化在浏览器 localStorage 并以 env 预填；已保
+存的表单值优先于 env 缺省。打开 monitor 即自动开测——零按钮。
 
 ### 结构
 

@@ -10,15 +10,13 @@
   "scripts": {
     "start": "node server.js",
     "hub": "node hub/hub.js",
-    "check": "node --check server.js && node --check lib/config.js && node --check lib/network.js && node --check lib/health.js && node --check lib/lifecycle.js && node --check lib/qr.js && node --check lib/theme-follow.js && node --check hub/hub.js",
+    "check": "node --check server.js && node --check lib/config.js && node --check lib/network.js && node --check lib/health.js && node --check lib/lifecycle.js && node --check lib/qr.js && node --check lib/theme-follow.js && node --check lib/hub-leg.js && node --check hub/hub.js && node --check public/shared.js && node --check public/monitor.js && node --check public/performer.js",
     "test": "node --test"
   },
   "dependencies": {
     "express": "^4.21.2",
     "qrcode": "^1.5.4",
-    "socket.io": "^4.8.1"
-  },
-  "devDependencies": {
+    "socket.io": "^4.8.1",
     "socket.io-client": "^4.8.3"
   }
 }

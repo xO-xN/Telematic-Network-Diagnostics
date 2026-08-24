@@ -1,16 +1,29 @@
-/* Telematic Network Diagnostics — shared styles for the performer and
-   monitor pages.
-   The CSS variables below are the standalone dark defaults; inside
-   PNDS App (≥ v1.2.3) the theme bridge (lib/theme-follow.js) overwrites
-   them with the App's pushed palette. */
+/* Telematic Network Diagnostics — both pages.
+ *
+ * Visual language follows Local Network Diagnostics (itself the
+ * "Multichannel Signal Generator" language): light theme, centered
+ * flex column, white rounded cards with subtle shadows, indigo accent.
+ * Plain DOM, no canvas.
+ */
 
+/* The project's own colors — the standalone look, shared by both pages.
+ * Inside the App, the theme bridge (lib/theme-follow.js, monitor page
+ * only) rewrites the consumed variables from the App's pnds:theme
+ * pushes (spec §5.3 "Theme Following"); absent a theme, these values
+ * render unchanged. */
 :root {
-  --bg: #14161c;
-  --card: #1d202a;
-  --track: #2a2f3d;
-  --text: #e8ecf4;
-  --muted: #9aa3b5;
-  --accent: #8ab4f8;
+  --bg: #f4f5fa;
+  --card: #ffffff;
+  --text: #1c1e2b;
+  --muted: #8a8fa3;
+  --accent: #5a4ff3;
+  --accent-soft: #e8eafd;
+  --danger: #e11d48;
+  --track: #e8ebf7;
+  --green: #16a34a;
+  --yellow: #d97706;
+  --red: #e11d48;
+  --gray: #8a8fa3;
 }
 
 * {
@@ -20,57 +33,341 @@
 html,
 body {
   margin: 0;
-  padding: 0;
   min-height: 100%;
 }
 
 body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "PingFang SC", "Microsoft YaHei", sans-serif;
   background: var(--bg);
   color: var(--text);
-  font-family: -apple-system, "Helvetica Neue", sans-serif;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  min-height: 100vh;
+  padding: 20px;
 }
 
-.card {
-  max-width: 560px;
-  background: var(--card);
-  border: 1px solid var(--track);
-  border-radius: 12px;
-  padding: 32px;
+#app {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+}
+
+header {
   text-align: center;
 }
 
-h1 {
-  margin: 0 0 12px;
-  font-size: 24px;
-}
-
-.role {
-  margin: 0 0 16px;
+header h1 {
   font-size: 16px;
   font-weight: 600;
-  color: var(--accent);
+  margin: 0 0 4px;
 }
 
-.muted {
-  margin: 0 0 8px;
-  font-size: 14px;
+header .sub {
+  font-size: 12px;
   color: var(--muted);
 }
 
-.hidden {
-  display: none;
+/* ------------------------------------------------------------
+ * Status palette (applied via .st-* on banner / cards)
+ * ------------------------------------------------------------ */
+
+.st-green {
+  --st: var(--green);
 }
 
-/* ---- monitor QR code ---- */
+.st-yellow {
+  --st: var(--yellow);
+}
 
-.qr-image {
-  width: 180px;
-  height: 180px;
-  padding: 8px;
-  background: #ffffff;
+.st-red {
+  --st: var(--red);
+}
+
+.st-gray,
+.st-idle {
+  --st: var(--gray);
+}
+
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--track);
+  flex: none;
+}
+
+.dot.on {
+  background: var(--st);
+}
+
+/* ------------------------------------------------------------
+ * Status banner (monitor)
+ * ------------------------------------------------------------ */
+
+.overall {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--card);
+  border: 1px solid var(--track);
+  border-radius: 12px;
+  padding: 14px 22px;
+  box-shadow: 0 1px 3px rgba(23, 26, 43, 0.08);
+  min-width: min(520px, 100%);
+  justify-content: center;
+}
+
+.overall .dot {
+  width: 16px;
+  height: 16px;
+  background: var(--st);
+}
+
+.overall-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.overall-copy {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--st);
+}
+
+/* ------------------------------------------------------------
+ * Node card (monitor)
+ * ------------------------------------------------------------ */
+
+.client-card {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  background: var(--card);
+  border: 1px solid var(--track);
+  border-radius: 10px;
+  padding: 10px 14px 12px;
+  width: min(360px, 100%);
+  box-shadow: 0 1px 3px rgba(23, 26, 43, 0.06);
+  border-left: 3px solid var(--st);
+}
+
+.client-card .head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.client-card .head .dot {
+  background: var(--st);
+}
+
+.client-card .status-word {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--st);
+  margin-left: auto;
+}
+
+.client-card .copy {
+  font-size: 11px;
+  color: var(--st);
+}
+
+.client-card .reason {
+  font-size: 11px;
+  color: var(--muted);
+  min-height: 14px;
+}
+
+.client-card .row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.client-card .row .k {
+  color: var(--muted);
+}
+
+.client-card .row .v {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------------
+ * Panels: form + event log (monitor)
+ * ------------------------------------------------------------ */
+
+.panel {
+  background: var(--card);
+  border: 1px solid var(--track);
+  border-radius: 10px;
+  padding: 12px 16px 14px;
+  width: min(400px, 100%);
+  box-shadow: 0 1px 3px rgba(23, 26, 43, 0.06);
+}
+
+.panel h3 {
+  font-size: 12px;
+  font-weight: 700;
+  margin: 0 0 8px;
+  color: var(--text);
+}
+
+.form-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.form-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.form-grid input {
+  font-size: 13px;
+  font-family: inherit;
+  padding: 7px 9px;
+  border: 1px solid var(--track);
   border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.form-grid input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.form-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.form-actions button {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  padding: 8px 0;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  background: var(--accent);
+  color: #ffffff;
+}
+
+.form-actions button:disabled {
+  background: var(--track);
+  color: var(--muted);
+  cursor: default;
+}
+
+.form-actions button#b-burst {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.form-actions button#b-burst:disabled {
+  background: var(--track);
+  color: var(--muted);
+}
+
+.hint {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 8px;
+}
+
+/* ------------------------------------------------------------
+ * Event log (monitor)
+ * ------------------------------------------------------------ */
+
+.log {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.log .entry {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.log .entry b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* ------------------------------------------------------------
+ * QR row (monitor)
+ * ------------------------------------------------------------ */
+
+.qr-row {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.qr-row img {
+  width: 140px;
+  height: 140px;
+  border-radius: 10px;
+  border: 1px solid var(--track);
+  background: #fff;
+}
+
+.qr-row .sub {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* ------------------------------------------------------------
+ * Performer page (placeholder)
+ * ------------------------------------------------------------ */
+
+.perf {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  background: var(--card);
+  border: 1px solid var(--track);
+  border-radius: 14px;
+  padding: 36px 48px;
+  box-shadow: 0 1px 3px rgba(23, 26, 43, 0.08);
+  min-width: min(320px, 100%);
+  text-align: center;
+}
+
+.perf h2 {
+  font-size: 16px;
+  margin: 0;
+}
+
+.perf .status {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.perf .meta {
+  font-size: 12px;
+  color: var(--muted);
 }

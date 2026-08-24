@@ -8,10 +8,15 @@ const test = require("node:test");
 const { spawn } = require("node:child_process");
 const path = require("node:path");
 
+const { io } = require("socket.io-client");
+const { events: EVENTS } = require("../public/shared");
+const { findFreePort, waitForPort, spawnHub, stopProcess } = require("./helpers");
+
 const PROJECT_ROOT = path.join(__dirname, "..");
 const PERFORMER_URL = "http://127.0.0.1:6868";
 const MONITOR_URL = "http://127.0.0.1:6869";
 const HEALTH_URL = `${PERFORMER_URL}/__pnds/health`;
+const HUB_TOKEN = "integration-hub-token-0123456789";
 
 function waitForHealthReady() {
   return new Promise((resolve, reject) => {
@@ -44,24 +49,7 @@ function waitForHealthReady() {
   });
 }
 
-// Kills the spawned server and waits for the process to actually exit,
-// so the next test can bind the same ports. Graceful SIGTERM first
-// (exercises the shutdown path), SIGKILL as a backstop.
-function stopServer(server) {
-  return new Promise((resolve) => {
-    if (server.exitCode !== null || server.signalCode !== null) {
-      resolve();
-      return;
-    }
 
-    const force = setTimeout(() => server.kill("SIGKILL"), 3000);
-    server.once("exit", () => {
-      clearTimeout(force);
-      resolve();
-    });
-    server.kill("SIGTERM");
-  });
-}
 
 test("score server: TND identity, health ready, pages + theme bridge served", async (t) => {
   const server = spawn(process.execPath, ["server.js", "--audio-mode", "none"], {
@@ -69,7 +57,7 @@ test("score server: TND identity, health ready, pages + theme bridge served", as
     stdio: "ignore",
   });
 
-  t.after(async () => stopServer(server));
+  t.after(async () => stopProcess(server));
 
   // --- health: ready, none-only audio, TND identity, 6868/6869 ---
   const health = await waitForHealthReady();
@@ -87,7 +75,10 @@ test("score server: TND identity, health ready, pages + theme bridge served", as
 
   assert.match(performerHtml, /Telematic Network Diagnostics/);
   assert.match(monitorHtml, /Telematic Network Diagnostics/);
-  assert.match(performerHtml, /Performer/);
+  // The dual-role page picks its branch at runtime by port; the source
+  // wires both branches (performer.js and monitor.js document.writes).
+  assert.match(performerHtml, /performer\.js/);
+  assert.match(monitorHtml, /monitor\.js/);
   // Both ports serve the same dual-role page; the theme bridge is wired
   // in its monitor branch, and the route itself is monitor-port only
   // (404 on the performer port — asserted below).
@@ -112,4 +103,187 @@ test("score server: TND identity, health ready, pages + theme bridge served", as
 
   const performerQrResponse = await fetch(`${PERFORMER_URL}/qr`);
   assert.equal(performerQrResponse.status, 404);
+});
+
+// ------------------------------------------------------------
+// Hub leg end to end (issue #3): the two-terminal demo as a test —
+// a real hub subprocess + the score server pointed at it through the
+// env channel, driven from a fake monitor page over Socket.IO.
+// ------------------------------------------------------------
+
+// A fake monitor page: one socket to the score server, collecting the
+// 1 Hz hub:state broadcasts until one satisfies the predicate.
+function connectMonitor() {
+  return new Promise((resolve, reject) => {
+    const socket = io(PERFORMER_URL, { reconnection: false, timeout: 5000 });
+    const timer = setTimeout(() => {
+      socket.close();
+      reject(new Error("monitor connect timeout"));
+    }, 5000);
+
+    socket.on("connect", () => {
+      clearTimeout(timer);
+      resolve(socket);
+    });
+
+    socket.on("connect_error", (error) => {
+      clearTimeout(timer);
+      socket.close();
+      reject(error);
+    });
+  });
+}
+
+function waitForHubState(socket, predicate, timeoutMs = 15000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      socket.off(EVENTS.hubState, onState);
+      reject(new Error("hub:state timeout"));
+    }, timeoutMs);
+
+    const onState = (state) => {
+      if (predicate(state)) {
+        clearTimeout(timer);
+        socket.off(EVENTS.hubState, onState);
+        resolve(state);
+      }
+    };
+
+    socket.on(EVENTS.hubState, onState);
+  });
+}
+
+test("hub leg: env auto-connect, live stats, burst, disconnect/reconnect, form channel", async (t) => {
+  const hubPort = await findFreePort();
+  const hub = spawnHub(hubPort, { token: HUB_TOKEN });
+  t.after(() => stopProcess(hub));
+  await waitForPort(hubPort);
+
+  const server = spawn(process.execPath, ["server.js"], {
+    cwd: PROJECT_ROOT,
+    stdio: "ignore",
+    env: {
+      ...process.env,
+      PNDS_HUB_URL: `http://127.0.0.1:${hubPort}`,
+      PNDS_HUB_TOKEN: HUB_TOKEN,
+      PNDS_HUB_ROOM: "rehearsal",
+      PNDS_NODE_ID: "site-test",
+    },
+  });
+  t.after(async () => stopProcess(server));
+
+  await waitForHealthReady();
+
+  const monitor = await connectMonitor();
+  t.after(() => monitor.close());
+
+  // --- env channel: the server connected to the hub at boot ---
+  const connected = await waitForHubState(
+    monitor,
+    (state) => state.configured && state.leg && state.leg.connected,
+  );
+
+  assert.equal(connected.config.room, "rehearsal");
+  assert.equal(connected.config.nodeId, "site-test");
+  assert.equal(connected.config.tokenSet, true);
+  assert.ok(connected.env.hubUrl.includes(`:${hubPort}`), "env is delivered for the form prefill");
+  assert.ok(
+    connected.leg.events.some((event) => event.type === "connected"),
+    "the connect is in the event log",
+  );
+
+  // --- live numbers appear on their own (auto-started, no button) ---
+  const measured = await waitForHubState(
+    monitor,
+    (state) =>
+      state.leg &&
+      state.leg.summary.samples >= 5 &&
+      typeof state.leg.summary.rttP50 === "number" &&
+      state.leg.summary.rttP50 >= 0,
+  );
+
+  assert.ok(measured.leg.summary.rttP95 >= measured.leg.summary.rttP50);
+  assert.ok(
+    Math.abs(
+      measured.leg.summary.oneWayEstimateMs - measured.leg.summary.rttP50 / 2,
+    ) < 0.6,
+    "one-way estimate is RTT p50 / 2",
+  );
+  assert.equal(measured.leg.status, "green", "loopback-stable link is green");
+  assert.equal(measured.leg.probing, "baseline");
+
+  // --- on-demand burst: probing flag flips, samples pour in ---
+  const samplesBefore = measured.leg.summary.samples;
+
+  monitor.emit(EVENTS.hubBurst);
+
+  await waitForHubState(monitor, (state) => state.leg && state.leg.probing === "burst");
+  const burstDone = await waitForHubState(
+    monitor,
+    (state) => state.leg && state.leg.probing === "baseline" && state.leg.summary.samples >= samplesBefore + 60,
+    15000,
+  );
+
+  assert.ok(
+    burstDone.leg.summary.samples >= samplesBefore + 60,
+    `burst added many samples: ${samplesBefore} → ${burstDone.leg.summary.samples}`,
+  );
+
+  // --- the hub drops: red at once, with an event ---
+  await stopProcess(hub);
+
+  const down = await waitForHubState(
+    monitor,
+    (state) => state.leg && !state.leg.connected && state.leg.status === "red",
+    8000,
+  );
+
+  assert.match(down.leg.reason, /unreachable/i);
+  assert.ok(
+    down.leg.events.some((event) => event.type === "disconnected"),
+    "the disconnect is in the event log",
+  );
+
+  // --- the hub comes back: auto-reconnect and the stats resume ---
+  const hubAgain = spawnHub(hubPort, { token: HUB_TOKEN });
+  t.after(() => stopProcess(hubAgain));
+
+  const up = await waitForHubState(
+    monitor,
+    (state) =>
+      state.leg &&
+      state.leg.connected &&
+      state.leg.summary.reconnects >= 1 &&
+      state.leg.events.some((event) => event.type === "reconnected"),
+    15000,
+  );
+
+  assert.equal(up.leg.status, "yellow", "one reconnect keeps the window yellow");
+  assert.match(up.leg.reason, /1 reconnect/i);
+
+  // --- the form channel replaces the env channel ---
+  monitor.emit(EVENTS.hubConfig, {
+    url: `http://127.0.0.1:${hubPort}`,
+    token: HUB_TOKEN,
+    room: "rehearsal",
+    nodeId: "site-renamed",
+  });
+
+  const renamed = await waitForHubState(
+    monitor,
+    (state) =>
+      state.config && state.config.nodeId === "site-renamed" && state.leg.connected,
+  );
+
+  assert.equal(renamed.config.nodeId, "site-renamed");
+
+  // --- the monitor page itself: persistence + env prefill wiring ---
+  const monitorHtml = await (await fetch(`${MONITOR_URL}/`)).text();
+  assert.match(monitorHtml, /monitor\.js/);
+
+  const monitorJs = await (await fetch(`${MONITOR_URL}/monitor.js`)).text();
+  assert.match(monitorJs, /localStorage/, "the form persists to localStorage");
+  assert.match(monitorJs, /storageKeys/, "storage key comes from shared.js");
+  assert.match(monitorJs, /autoConfig/, "auto-start uses the loaded config");
+  assert.match(monitorJs, /state\.env/, "env prefill is wired");
 });

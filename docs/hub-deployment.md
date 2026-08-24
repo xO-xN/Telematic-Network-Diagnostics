@@ -194,9 +194,19 @@ WebSocket（`ws://`）是浏览器/程序里"一条长连着的双向通道"，�
 | hub 起不来 | `journalctl -u tnd-hub -n 50`——最常见是没设 `HUB_TOKEN`（hub 会拒绝启动）或 node 路径不对 |
 | 升级 hub | `cd /opt/tnd && git pull && npm ci --omit=dev && sudo systemctl restart tnd-hub` |
 
-## 客户端如何连（工具侧一览）
+## 客户端如何连（工具侧）
 
-score server 侧的连接实现随 issue #3 落地；契约已在 hub v0.1 冻结：
+score server 侧的连接已随 issue #3 落地：设置四个环境变量（或打开
+monitor 页填表单）即自动连接并开始 1 Hz echo 基线测量：
+
+```sh
+PNDS_HUB_URL=ws://<VPS公网IP>:4000 \
+PNDS_HUB_TOKEN=<你的 token> \
+PNDS_NODE_ID=site-a \
+npm start          # 正式路径把 URL 换成 wss://hub.example.com
+```
+
+底层握手契约（freeze 自 hub v0.1）：
 
 ```js
 // Node（socket.io-client）：
@@ -207,6 +217,8 @@ const socket = io("wss://hub.example.com", {
 socket.on("welcome", ({ room, hubTime }) => { /* 房间确认 */ });
 socket.on("relay", (body) => { /* body.from + body.hubReceivedAt 已盖戳 */ });
 socket.emit("relay", { /* 任意 JSON，同房间其他节点收到 */ });
+// RTT 测量（工具的 hub 腿）：发 echo、原样收带回戳的回包，往返计时在发送方
+socket.emit("echo", { seq: 1, sentAt: Date.now() });
 ```
 
 环境变量契约（App v1.3.0 冻结点）：`PNDS_NODE_ID` / `PNDS_HUB_URL`

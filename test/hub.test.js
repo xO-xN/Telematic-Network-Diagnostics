@@ -6,9 +6,6 @@
 
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { spawn } = require("node:child_process");
-const net = require("node:net");
-const path = require("node:path");
 
 const { io } = require("socket.io-client");
 const {
@@ -16,83 +13,9 @@ const {
   tokenMatches,
   DEFAULT_ROOM,
 } = require("../hub/hub");
+const { findFreePort, waitForPort, spawnHub, stopProcess } = require("./helpers");
 
-const PROJECT_ROOT = path.join(__dirname, "..");
 const HUB_TOKEN = "test-hub-token-0123456789abcdef";
-
-// ------------------------------------------------------------
-// Helpers
-// ------------------------------------------------------------
-
-// Resolves with the first port the OS hands out, or rejects when none
-// is free (never in practice).
-function findFreePort() {
-  return new Promise((resolve, reject) => {
-    const probe = net.createServer();
-
-    probe.once("error", reject);
-    probe.listen(0, "127.0.0.1", () => {
-      const { port } = probe.address();
-
-      probe.close(() => resolve(port));
-    });
-  });
-}
-
-// Spawns a hub subprocess with the given env on top of a clean copy of
-// process.env (PATH etc. must survive for node itself).
-function spawnHub(port, extraEnv = {}) {
-  return spawn(process.execPath, ["hub/hub.js"], {
-    cwd: PROJECT_ROOT,
-    stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, HUB_TOKEN, HUB_PORT: String(port), ...extraEnv },
-  });
-}
-
-// Resolves when the hub's port accepts a TCP connection (it listens
-// before any client can handshake).
-function waitForPort(port, attempts = 50) {
-  return new Promise((resolve, reject) => {
-    const tick = (left) => {
-      const socket = net.connect({ port, host: "127.0.0.1" });
-
-      socket.once("connect", () => {
-        socket.destroy();
-        resolve();
-      });
-      socket.once("error", () => {
-        socket.destroy();
-
-        if (left <= 1) {
-          reject(new Error("hub port never opened"));
-          return;
-        }
-
-        setTimeout(() => tick(left - 1), 100);
-      });
-    };
-
-    tick(attempts);
-  });
-}
-
-// Kills the hub and waits for the process to exit so the next test can
-// reuse the pattern safely.
-function stopHub(child) {
-  return new Promise((resolve) => {
-    if (child.exitCode !== null || child.signalCode !== null) {
-      resolve();
-      return;
-    }
-
-    const force = setTimeout(() => child.kill("SIGKILL"), 3000);
-    child.once("exit", () => {
-      clearTimeout(force);
-      resolve();
-    });
-    child.kill("SIGTERM");
-  });
-}
 
 // Connects one fake site node; resolves { socket, welcome }. No token
 // default on purpose — an omitted token must reach the hub as omitted
@@ -141,6 +64,25 @@ function nextRelay(socket, timeoutMs) {
   });
 }
 
+// Resolves with the next `event` payload the socket receives — or null
+// after the timeout (isolation / silence assertions).
+function nextEvent(socket, event, timeoutMs) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      socket.off(event, onEvent);
+      resolve(null);
+    }, timeoutMs);
+
+    const onEvent = (payload) => {
+      clearTimeout(timer);
+      socket.off(event, onEvent);
+      resolve(payload);
+    };
+
+    socket.on(event, onEvent);
+  });
+}
+
 // ------------------------------------------------------------
 // Unit: handshake helpers
 // ------------------------------------------------------------
@@ -167,8 +109,8 @@ test("tokenMatches: equal secrets match, everything else does not", () => {
 
 test("hub: wrong token is refused, right token is welcomed", async (t) => {
   const port = await findFreePort();
-  const hub = spawnHub(port);
-  t.after(() => stopHub(hub));
+  const hub = spawnHub(port, { token: HUB_TOKEN });
+  t.after(() => stopProcess(hub));
 
   await waitForPort(port);
 
@@ -206,8 +148,8 @@ test("hub: wrong token is refused, right token is welcomed", async (t) => {
 
 test("hub: relay reaches the same room (stamped), not the sender", async (t) => {
   const port = await findFreePort();
-  const hub = spawnHub(port);
-  t.after(() => stopHub(hub));
+  const hub = spawnHub(port, { token: HUB_TOKEN });
+  t.after(() => stopProcess(hub));
 
   await waitForPort(port);
 
@@ -255,8 +197,8 @@ test("hub: relay reaches the same room (stamped), not the sender", async (t) => 
 
 test("hub: rooms are isolated from each other", async (t) => {
   const port = await findFreePort();
-  const hub = spawnHub(port);
-  t.after(() => stopHub(hub));
+  const hub = spawnHub(port, { token: HUB_TOKEN });
+  t.after(() => stopProcess(hub));
 
   await waitForPort(port);
 
@@ -289,8 +231,8 @@ test("hub: rooms are isolated from each other", async (t) => {
 
 test("hub: no room option lands everyone in the default room", async (t) => {
   const port = await findFreePort();
-  const hub = spawnHub(port);
-  t.after(() => stopHub(hub));
+  const hub = spawnHub(port, { token: HUB_TOKEN });
+  t.after(() => stopProcess(hub));
 
   await waitForPort(port);
 
@@ -314,9 +256,51 @@ test("hub: no room option lands everyone in the default room", async (t) => {
   assert.equal(received.from, "site-a");
 });
 
+test("hub: echo returns the body to the sender, stamped, and to nobody else", async (t) => {
+  const port = await findFreePort();
+  const hub = spawnHub(port, { token: HUB_TOKEN });
+  t.after(() => stopProcess(hub));
+
+  await waitForPort(port);
+
+  const url = `http://127.0.0.1:${port}`;
+  const a = await connectNode(url, { token: HUB_TOKEN, room: "alpha", node: "site-a" });
+  const b = await connectNode(url, { token: HUB_TOKEN, room: "alpha", node: "site-b" });
+  t.after(() => a.socket.close());
+  t.after(() => b.socket.close());
+
+  // The sender's own echo comes back stamped (the hub-leg RTT seam).
+  const echoed = nextEvent(a.socket, "echo", 5000);
+  const sentAt = Date.now();
+
+  a.socket.emit("echo", { seq: 7, sentAt });
+
+  const body = await echoed;
+
+  assert.ok(body, "the sender must receive its own echo");
+  assert.equal(body.seq, 7);
+  assert.equal(body.sentAt, sentAt);
+  assert.equal(body.from, "site-a");
+  assert.ok(
+    Number.isInteger(body.hubReceivedAt) &&
+      body.hubReceivedAt >= sentAt - 5 &&
+      body.hubReceivedAt <= Date.now() + 5,
+    "the echo carries the hub receive timestamp",
+  );
+
+  // An echo is a private round trip: the same-room node hears nothing
+  // — not the echo, not a relay.
+  assert.equal(await nextEvent(b.socket, "echo", 400), null);
+  assert.equal(await nextRelay(b.socket, 400), null);
+});
+
 test("hub: no HUB_TOKEN set — refuse to start", async () => {
   const port = await findFreePort();
-  const hub = spawnHub(port, { HUB_TOKEN: "" });
+  const hub = spawnHub(port, {
+    token: HUB_TOKEN,
+    stdio: ["ignore", "pipe", "pipe"],
+    extraEnv: { HUB_TOKEN: "" },
+  });
 
   const { code, stderr } = await new Promise((resolve) => {
     let output = "";

@@ -16,6 +16,10 @@
 //   - a client emitting "relay" with any JSON body gets that body
 //     relayed to every OTHER client in the same room, stamped with
 //     { from, hubReceivedAt } — the hub's receive timestamp
+//   - a client emitting "echo" with any JSON body gets the same body
+//     straight back, stamped the same way — the hub-leg RTT
+//     measurement (issue #3): the sender clocks the round trip, the
+//     hub adds nothing but the stamp
 //
 // Environment:
 //   HUB_TOKEN  required — shared secret (generate: openssl rand -hex 24)
@@ -68,6 +72,25 @@ function tokenMatches(received, expected) {
   return crypto.timingSafeEqual(a, b);
 }
 
+// The stamped body every outbound seam (relay, echo) sends: the
+// client's JSON body (objects pass through opaquely, anything else is
+// wrapped) plus the hub's own { from, hubReceivedAt }. Sender-supplied
+// values of the two stamp keys are always overwritten — the hub is the
+// authority on both.
+function stampedBody(payload, node) {
+  const body =
+    payload !== null &&
+    typeof payload === "object" &&
+    !Array.isArray(payload)
+      ? { ...payload }
+      : { value: payload };
+
+  body.from = node;
+  body.hubReceivedAt = Date.now();
+
+  return body;
+}
+
 // Wires the hub behavior onto a Socket.IO server. Token comes from the
 // environment at call time so tests (and operators) can set it before
 // the handshake arrives.
@@ -100,15 +123,18 @@ function attachHub(io) {
     // body stays opaque here — its vocabulary belongs to the tool's
     // clients (rolling stats, probes, …), not to the hub.
     socket.on("relay", (payload) => {
-      const body =
-        payload !== null && typeof payload === "object" && !Array.isArray(payload)
-          ? { ...payload }
-          : { value: payload };
+      socket.to(room).emit("relay", stampedBody(payload, node));
+    });
 
-      body.from = node;
-      body.hubReceivedAt = Date.now();
-
-      socket.to(room).emit("relay", body);
+    // The echo seam: any JSON body in, the same body straight back to
+    // the SENDER, stamped with the hub receive time. RTT belongs to the
+    // sender's clock; the hub never interprets the body (issue #3's
+    // baseline/burst probes send { seq, sentAt }).
+    socket.on("echo", (payload) => {
+      socket.emit(
+        "echo",
+        stampedBody(payload, node),
+      );
     });
 
     socket.on("disconnect", (reason) => {

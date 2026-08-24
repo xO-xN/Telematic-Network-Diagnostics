@@ -1,72 +1,51 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
-    <meta
-      name="viewport"
-      content="width=device-width, initial-scale=1, viewport-fit=cover"
-    />
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
-
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Telematic Network Diagnostics</title>
-
     <link rel="stylesheet" type="text/css" href="style.css" />
-
     <script src="__config.js"></script>
+    <script src="shared.js"></script>
     <script>
       // Single page, two roles: the performer port serves the performer
-      // view, the monitor port serves the operator view (the template
-      // family convention — the same files are served on both ports).
-      window.PNDS_IS_MONITOR =
-        window.location.port === String(window.__PNDS_PORTS__.monitorPort);
-
-      // Theme following (spec §5.3): the monitor page follows the App's
-      // pushed theme. Zero-config path — the module writes the palette
-      // into the page's CSS variables (style.css carries the standalone
-      // dark defaults). Performer pages never load it.
-      if (window.PNDS_IS_MONITOR) {
-        document.write(
-          '\x3Cscript src="/__pnds/theme-follow.js"\x3E\x3C/script\x3E',
-        );
-      }
+      // view, the monitor port serves the operator console. Socket.IO
+      // is served by the performer server; the monitor page loads it
+      // cross-port. No CDN: performances run offline.
+      document.write(
+        '\x3Cscript src="http://' +
+          location.hostname +
+          ':' +
+          window.PNDS.performerPort +
+          '/socket.io/socket.io.js"\x3E\x3C/script\x3E',
+      );
     </script>
   </head>
 
   <body>
-    <!--
-      Placeholder pages (issue #2): the hub-leg measurement + connect
-      form (issue #3), the flower view (issue #4) and the local-leg
-      diagnostics (issue #5) replace this body as they land.
-    -->
-    <main class="card">
-      <h1>Telematic Network Diagnostics</h1>
-      <p id="role" class="role"></p>
-      <p class="muted">
-        v0.1.0 — under construction · 施工中
-      </p>
-      <p class="muted">
-        The hub-leg measurement, the flower view and the local-leg
-        diagnostics arrive with the next tickets.
-      </p>
-
-      <!-- Monitor only: the QR code pointing performers at the
-           performer page (src is set by the script below; on the
-           performer port the route does not exist). -->
-      <img id="qr" class="qr-image hidden" alt="" />
-    </main>
+    <main id="app"></main>
 
     <script>
-      var role = document.getElementById("role");
+      window.PNDS_IS_MONITOR =
+        window.location.port === String(window.PNDS.monitorPort);
 
       if (window.PNDS_IS_MONITOR) {
-        role.textContent = "Monitor · 监视端";
-        var qr = document.getElementById("qr");
-        qr.alt = "Performer page QR code · 演奏者页面二维码";
-        qr.src = "/qr";
-        qr.classList.remove("hidden");
+        // Theme following (spec §5.3): the monitor page follows the
+        // App's pushed theme. The derive hook maps the App palette to
+        // this page's status colors (WCAG-tuned per surface by the
+        // module itself) — the options global must exist before the
+        // module loads.
+        window.PNDS_THEME_OPTIONS = {
+          derive: function (palette) {
+            return window.PNDS_THEME.statusVariables(palette);
+          },
+        };
+        document.write(
+          '\x3Cscript src="/__pnds/theme-follow.js"\x3E\x3C/script\x3E',
+        );
+        document.write('\x3Cscript src="monitor.js"\x3E\x3C/script\x3E');
       } else {
-        role.textContent = "Performer · 演奏者";
+        document.write('\x3Cscript src="performer.js"\x3E\x3C/script\x3E');
       }
     </script>
   </body>
