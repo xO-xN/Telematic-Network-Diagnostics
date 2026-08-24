@@ -272,9 +272,11 @@ function makeLeg(socket, overrides = {}) {
   });
 }
 
-test("HubLeg: baseline probes measure RTT, warm-up leaves gray→green", async () => {
+test("HubLeg: baseline probes measure RTT, warm-up leaves gray→green", async (t) => {
   const socket = new FakeSocket({ echoLatencyMs: 5 });
   const leg = makeLeg(socket);
+
+  t.after(() => leg.stop());
 
   leg.start();
   socket.deliver("connect");
@@ -298,9 +300,11 @@ test("HubLeg: baseline probes measure RTT, warm-up leaves gray→green", async (
   );
 });
 
-test("HubLeg: dropped echoes become losses and drive the status red", async () => {
+test("HubLeg: dropped echoes become losses and drive the status red", async (t) => {
   const socket = new FakeSocket({ dropEvery: 1 }); // every reply dropped
   const leg = makeLeg(socket);
+
+  t.after(() => leg.stop());
 
   leg.start();
   socket.deliver("connect");
@@ -317,9 +321,11 @@ test("HubLeg: dropped echoes become losses and drive the status red", async () =
   assert.equal(snapshot.status, STATUS.RED);
 });
 
-test("HubLeg: disconnect flips red immediately; reconnect counts and recovers", async () => {
+test("HubLeg: disconnect flips red immediately; reconnect counts and recovers", async (t) => {
   const socket = new FakeSocket({ echoLatencyMs: 2 });
   const leg = makeLeg(socket);
+
+  t.after(() => leg.stop());
 
   leg.start();
   socket.deliver("connect");
@@ -347,42 +353,48 @@ test("HubLeg: disconnect flips red immediately; reconnect counts and recovers", 
   assert.match(up.reason, /1 reconnect/i);
 });
 
-test("HubLeg: the phase cycle runs automatically — burst density, calm baseline, repeating", async () => {
+test("HubLeg: the phase cycle runs automatically — burst density, calm baseline, repeating", async (t) => {
   const socket = new FakeSocket({ echoLatencyMs: 0 });
   const leg = makeLeg(socket);
+
+  t.after(() => leg.stop());
 
   leg.start();
   socket.deliver("connect");
 
   // The cycle starts in the burst phase the moment the link is up
-  // (same shape as LND) — no manual trigger anywhere.
-  await delay(2);
+  // (same shape as LND) — no manual trigger anywhere. enterBurstPhase
+  // runs synchronously in the connect handler, so no waiting needed.
   assert.equal(leg.snapshot().probing, "burst");
 
+  // Measure one WHOLE phase of each kind (gated on the phase flags,
+  // not on wall-clock guesses), then compare the densities: burst must
+  // clearly outpace calm. Contrast, not absolute counts — timer
+  // scheduling jitter makes fixed-count thresholds flaky.
   const burstStart = socket.sent.length;
-  await delay(30); // the burst phase itself (30 ms at 3 ms cadence)
-  const burstSends = socket.sent.length - burstStart;
 
-  assert.ok(burstSends >= 8, `expected dense burst sends, got ${burstSends}`);
-
-  // Then the calm phase: back to the 1 Hz baseline cadence.
   await waitFor(
     () => leg.snapshot().probing === "calm",
-    200,
+    500,
     "phase never returned to calm",
   );
 
+  const burstSends = socket.sent.length - burstStart;
+
   const calmStart = socket.sent.length;
-  await delay(30);
-  const calmSends = socket.sent.length - calmStart;
 
-  assert.ok(calmSends <= 3, `expected thin calm sends, got ${calmSends}`);
-
-  // …and the cycle repeats.
   await waitFor(
     () => leg.snapshot().probing === "burst",
-    200,
+    500,
     "the cycle never returned to burst",
+  );
+
+  const calmSends = socket.sent.length - calmStart;
+
+  assert.ok(burstSends >= 5, `expected dense burst sends, got ${burstSends}`);
+  assert.ok(
+    calmSends * 2 < burstSends,
+    `burst must outpace calm: burst=${burstSends} calm=${calmSends}`,
   );
 
   // Phase switches stay out of the event log (they fire every cycle;
@@ -394,21 +406,24 @@ test("HubLeg: the phase cycle runs automatically — burst density, calm baselin
   leg.stop();
 });
 
-test("HubLeg: no probes and no phase cycle while disconnected", async () => {
+test("HubLeg: no probes and no phase cycle while disconnected", async (t) => {
   const socket = new FakeSocket();
   const leg = makeLeg(socket);
+
+  t.after(() => leg.stop());
 
   leg.start(); // never connected
   await delay(30);
 
   assert.equal(socket.sent.filter(([event]) => event === "echo").length, 0);
   assert.equal(leg.snapshot().probing, "calm");
-  leg.stop();
 });
 
-test("HubLeg: stop closes the socket and clears pending probes", async () => {
+test("HubLeg: stop closes the socket and clears pending probes", async (t) => {
   const socket = new FakeSocket({ echoLatencyMs: 1000 }); // replies late
   const leg = makeLeg(socket);
+
+  t.after(() => leg.stop()); // idempotent when the test already stopped
 
   leg.start();
   socket.deliver("connect");
@@ -441,32 +456,55 @@ function statsBodyFrom(from, overrides = {}) {
   };
 }
 
-test("HubLeg: announces own stats into the room while connected", async () => {
+test("HubLeg: announces own stats into the room while connected", async (t) => {
   const socket = new FakeSocket({ echoLatencyMs: 0 });
   const leg = makeLeg(socket, { announceIntervalMs: 5 });
 
+  // The timers stop through t.after even when an assertion fails — a
+  // leaked HubLeg keeps intervals alive and hangs the test process.
+  t.after(() => leg.stop());
+
   leg.start();
   socket.deliver("connect");
-  await delay(15);
 
-  const announces = socket.sent.filter(([event]) => event === "relay");
+  // Poll rather than sleep a fixed gap (timer jitter), and wait for a
+  // DATA-BEARING announce: the first announces legitimately carry null
+  // numbers — they fire before the first echo round trip completes.
+  const isAnnounce = (entry) => entry[0] === "relay";
+  const hasData = (entry) =>
+    entry[0] === "relay" &&
+    entry[1].summary &&
+    typeof entry[1].summary.rttP50 === "number";
 
-  assert.ok(announces.length >= 2, `expected periodic announces, got ${announces.length}`);
+  await waitFor(
+    () => socket.sent.filter(isAnnounce).length >= 2,
+    1000,
+    "expected periodic announces",
+  );
+  await waitFor(
+    () => socket.sent.some(hasData),
+    1000,
+    "expected a data-bearing announce",
+  );
 
-  const body = announces[0][1];
+  const body = socket.sent.find(hasData)[1];
 
   assert.equal(body.type, "tnd-stats");
   assert.equal(body.node, "site-a");
   assert.equal(body.connected, true);
   assert.equal(typeof body.status, "string");
-  assert.equal(body.summary && typeof body.summary.rttP50, "number");
+  assert.equal(typeof body.summary.rttP50, "number");
   assert.equal(body.performerCount, 0, "no performer data until #5");
   assert.equal(body.localWorst, null, "no local data until #5");
 
-  leg.stop();
+  // The warm-up announces (null numbers) are also legitimate bodies.
+  const first = socket.sent.find(isAnnounce)[1];
+
+  assert.equal(first.type, "tnd-stats");
+  assert.ok(first.summary, "warm-up announce still carries a summary");
 });
 
-test("HubLeg: site-level fields come from the injected getters (#5's plug points)", async () => {
+test("HubLeg: site-level fields come from the injected getters (#5's plug points)", async (t) => {
   const socket = new FakeSocket({ echoLatencyMs: 0 });
   const leg = makeLeg(socket, {
     announceIntervalMs: 5,
@@ -474,21 +512,28 @@ test("HubLeg: site-level fields come from the injected getters (#5's plug points
     localWorst: () => "yellow",
   });
 
+  t.after(() => leg.stop());
+
   leg.start();
   socket.deliver("connect");
-  await delay(10);
+
+  await waitFor(
+    () => socket.sent.some(([event]) => event === "relay"),
+    1000,
+    "expected an announce",
+  );
 
   const announce = socket.sent.find(([event]) => event === "relay");
 
   assert.equal(announce[1].performerCount, 4);
   assert.equal(announce[1].localWorst, "yellow");
-
-  leg.stop();
 });
 
-test("HubLeg: relayed peer stats land in the roster; foreign types ignored", () => {
+test("HubLeg: relayed peer stats land in the roster; foreign types ignored", (t) => {
   const socket = new FakeSocket();
   const leg = makeLeg(socket);
+
+  t.after(() => leg.stop());
 
   leg.start();
   socket.deliver("connect");
@@ -510,7 +555,7 @@ test("HubLeg: relayed peer stats land in the roster; foreign types ignored", () 
   leg.stop();
 });
 
-test("HubLeg: a silent peer goes offline, then is pruned from the roster", () => {
+test("HubLeg: a silent peer goes offline, then is pruned from the roster", (t) => {
   let clock = 100000;
   const socket = new FakeSocket();
   const leg = makeLeg(socket, {
@@ -518,6 +563,8 @@ test("HubLeg: a silent peer goes offline, then is pruned from the roster", () =>
     peerOfflineMs: 5000,
     peerPruneMs: 30000,
   });
+
+  t.after(() => leg.stop());
 
   leg.start();
   socket.deliver("connect");

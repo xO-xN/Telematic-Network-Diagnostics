@@ -37,11 +37,10 @@ app.innerHTML =
   '<span class="overall-copy" id="banner-copy">…</span>' +
   '<span class="attribution" id="banner-attribution"></span>' +
   "</div>" +
-  '<div class="panel star-panel" id="star-panel">' +
-  '<div id="star"></div>' +
-  '<div class="hint">辐条 = hub 腿（标注 RTT p50，颜色 = 质量）· 外环 = 本地腿（灰 = 无数据）</div>' +
-  "</div>" +
-  '<div id="cards"></div>' +
+  // Balanced two-column row: the connection form on the left, the
+  // star diagram on the right, equal widths (stacks on narrow
+  // screens).
+  '<div class="two-col">' +
   '<div class="panel" id="form-panel">' +
   "<h3>Hub 连接 · Hub connection</h3>" +
   '<div class="form-grid">' +
@@ -56,6 +55,12 @@ app.innerHTML =
   '<div class="hint">表单保存在浏览器 localStorage，重开无需重填；' +
   "App 注入的 env（PNDS_HUB_URL 等）会作为预填默认值。</div>" +
   "</div>" +
+  '<div class="panel star-panel" id="star-panel">' +
+  '<div id="star"></div>' +
+  '<div class="hint">辐条 = hub 腿（标注 RTT p50，颜色 = 质量）· 外环 = 本地腿（灰 = 无数据）</div>' +
+  "</div>" +
+  "</div>" +
+  '<div id="cards"></div>' +
   '<div class="panel" id="log-panel">' +
   "<h3>事件 · Events</h3>" +
   '<div class="log" id="log"></div>' +
