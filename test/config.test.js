@@ -1,61 +1,99 @@
+// Project identity and configuration resolution (issue #2): the repo
+// must BE Telematic Network Diagnostics — manifest identity, none-only
+// audio, the template's audio stack gone.
+
 const assert = require("node:assert/strict");
 const test = require("node:test");
+const fs = require("node:fs");
 const path = require("node:path");
 
 const {
   loadManifest,
-  resolveAudioMode,
-  resolveOscTarget,
+  parseCliOptions,
   resolveServerConfig,
 } = require("../lib/config");
 
 const PROJECT_ROOT = path.join(__dirname, "..");
 
-test("loadManifest reads the project manifest", () => {
+// ------------------------------------------------------------
+// Manifest identity
+// ------------------------------------------------------------
+
+test("manifest carries the Telematic Network Diagnostics identity", () => {
   const manifest = loadManifest(PROJECT_ROOT);
 
   assert.equal(manifest.schemaVersion, 1);
-  assert.ok(
-    Number.isInteger(manifest.audio.outputChannels) &&
-      manifest.audio.outputChannels >= 1,
-  );
-  assert.notEqual(
-    manifest.scoreServer.performerPort,
-    manifest.scoreServer.monitorPort,
-  );
+  assert.equal(manifest.id, "telematic-network-diagnostics");
+  assert.equal(manifest.name, "Telematic Network Diagnostics");
+  assert.equal(manifest.version, "0.1.0");
 });
 
-test("resolveAudioMode falls back to the manifest default", () => {
+test("manifest is audio none-only (network-only project)", () => {
   const manifest = loadManifest(PROJECT_ROOT);
 
-  assert.equal(resolveAudioMode(undefined, manifest), "internal");
-  assert.equal(resolveAudioMode("none", manifest), "none");
-  assert.throws(() => resolveAudioMode("bogus", manifest));
+  assert.equal(manifest.audio.defaultMode, "none");
+  assert.deepEqual(manifest.audio.supportedModes, ["none"]);
 });
 
-test("resolveOscTarget priority: env > cli > manifest", () => {
+test("manifest serves the score server on ports 6868 / 6869", () => {
   const manifest = loadManifest(PROJECT_ROOT);
 
-  assert.equal(
-    resolveOscTarget(undefined, manifest, {
-      PNDS_OSC_TARGET: "10.0.0.5:9999",
-    }),
-    "10.0.0.5:9999",
-  );
-  assert.equal(
-    resolveOscTarget("127.0.0.1:57120", manifest, {}),
-    "127.0.0.1:57120",
-  );
-  assert.equal(
-    resolveOscTarget(undefined, manifest, {}),
-    "127.0.0.1:57110",
-  );
+  assert.equal(manifest.scoreServer.entry, "server.js");
+  assert.equal(manifest.scoreServer.performerPort, 6868);
+  assert.equal(manifest.scoreServer.monitorPort, 6869);
 });
+
+// ------------------------------------------------------------
+// Config resolution
+// ------------------------------------------------------------
 
 test("resolveServerConfig returns the manifest ports", () => {
-  const manifest = loadManifest(PROJECT_ROOT);
-  const config = resolveServerConfig(manifest);
+  const config = resolveServerConfig(loadManifest(PROJECT_ROOT));
 
-  assert.equal(config.performerPort, manifest.scoreServer.performerPort);
-  assert.equal(config.monitorPort, manifest.scoreServer.monitorPort);
+  assert.equal(config.performerPort, 6868);
+  assert.equal(config.monitorPort, 6869);
+});
+
+test("parseCliOptions: --help asked, --audio-mode accepted and ignored", () => {
+  assert.deepEqual(parseCliOptions(["--help"]), { help: true });
+  assert.deepEqual(parseCliOptions(["-h"]), { help: true });
+  assert.deepEqual(parseCliOptions(["--audio-mode", "none"]), {});
+  assert.deepEqual(parseCliOptions(["--audio-mode=internal"]), {});
+  assert.deepEqual(parseCliOptions([]), {});
+});
+
+// ------------------------------------------------------------
+// De-templatization guard (issue #2: "audio stack leaves no remnants")
+// ------------------------------------------------------------
+
+test("the template's audio stack is gone from the repo", () => {
+  const forbidden = [
+    "audio",
+    "supercollider",
+    "lib/audio-engine.js",
+    "lib/osc-transport.js",
+    "lib/players.js",
+    "lib/protocol.js",
+    "lib/seats-store.js",
+    "public/libraries",
+  ];
+
+  for (const relative of forbidden) {
+    assert.equal(
+      fs.existsSync(path.join(PROJECT_ROOT, relative)),
+      false,
+      `${relative} must not exist`,
+    );
+  }
+});
+
+test("package.json is de-templatized: identity, no audio dependencies", () => {
+  const packageJson = JSON.parse(
+    fs.readFileSync(path.join(PROJECT_ROOT, "package.json"), "utf8"),
+  );
+
+  assert.equal(packageJson.name, "telematic-network-diagnostics");
+  assert.equal(packageJson.version, "0.1.0");
+  assert.equal("osc-min" in packageJson.dependencies, false);
+  assert.equal("osc-min" in (packageJson.devDependencies || {}), false);
 });

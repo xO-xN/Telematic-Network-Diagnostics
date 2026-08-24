@@ -1,22 +1,20 @@
 {
-  "name": "pnds-template",
-  "version": "0.3.1",
+  "name": "telematic-network-diagnostics",
+  "version": "0.1.0",
   "private": true,
-  "description": "PNDS score project template: two-fader touch performer driving one sine voice per client with 16-channel output.",
+  "description": "PNDS score project for cross-internet network diagnostics: measures the hub leg (score server to public hub) and the local leg (performer to score server) of a hub/star telematic setup.",
   "main": "server.js",
   "engines": {
-    "node": ">=24 <25"
+    "node": ">=20"
   },
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js --audio-mode internal",
-    "dev:none": "node server.js --audio-mode none",
-    "check": "node --check server.js && node --check lib/config.js && node --check lib/network.js && node --check lib/health.js && node --check lib/osc-transport.js && node --check lib/audio-engine.js && node --check lib/players.js && node --check lib/protocol.js && node --check lib/lifecycle.js && node --check lib/theme-follow.js && node --check audio/controller.js && node --check public/shared.js && node --check public/client.js && node --check public/performer.js && node --check public/monitor.js",
+    "hub": "node hub/hub.js",
+    "check": "node --check server.js && node --check lib/config.js && node --check lib/network.js && node --check lib/health.js && node --check lib/lifecycle.js && node --check lib/qr.js && node --check lib/theme-follow.js && node --check hub/hub.js",
     "test": "node --test"
   },
   "dependencies": {
     "express": "^4.21.2",
-    "osc-min": "^1.1.2",
     "qrcode": "^1.5.4",
     "socket.io": "^4.8.1"
   },

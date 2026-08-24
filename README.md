@@ -1,4 +1,4 @@
-# PNDS Template
+# Telematic Network Diagnostics
 
 [English](#english) | [中文](#中文)
 
@@ -6,36 +6,56 @@
 
 ## English
 
-A ready-to-run PNDS digital score project skeleton with minimal working features. Use this template to start a new PNDS score project.
+A PNDS score project for cross-internet network diagnostics: before a
+telematic (hub/star) performance, it answers the conductor's go/no-go
+question — is the whole network playable right now, and if not, which
+node and which leg is the problem?
 
-### Features
+It measures two legs (issue #1, v0.1.0 under construction):
 
-- **Performer UI**: landscape touch interface with two curved faders (AMP / FREQ); the FREQ fader carries a semitone pitch scale with highlighted ticks and letter names on the center note and its fifth above/below, and a 3-position register switch (1 low / 2 mid / 3 high) changes the frequency band
-- **Audio**: one sine voice per client, 16-channel output (odd/even ids default to channels 1/2)
-- **Monitor**: real-time client amp/freq display, per-client output channel reassignment
-- **Reconnect recovery**: clients recover their id and fader state after a disconnect
-- **Theme following**: inside PNDS App (≥ v1.2.3) the monitor page follows the App color theme (all four themes) — the spec §5.3 optional bridge, consumed here through the p5 `onTheme` callback (`lib/theme-follow.js`, served at `/__pnds/theme-follow.js`)
-- **Three audio modes**: `internal` (scsynth), `external` (custom OSC), `none` (UI/network only)
+- **Hub leg** — score server ↔ public hub, measured continuously.
+  Latency is reported as a number only; quality (jitter, loss,
+  reconnects) is what colors the status.
+- **Local leg** — performer ↔ their site's score server over local
+  Wi-Fi (the Local Network Diagnostics logic).
 
-### Getting Started
+The tool ships with its own relay: [`hub/hub.js`](hub/hub.js) — a
+Socket.IO hub (token auth, rooms, hub receive timestamps) deployed from
+source on a public VPS. No audio, no SuperCollider: the project runs
+audio mode `none` only.
+
+### Status
+
+v0.1.0 base (issue #2): the de-templatized score server (performer /
+monitor dual server, health, theme following) and the deployable hub.
+The hub-leg measurement, the flower view and the local-leg diagnostics
+land with issues #3–#5.
+
+### Quick start
 
 ```sh
 npm install
-npm run dev:none    # run without audio
+npm start        # performer page http://<LAN-IP>:6868/, monitor :6869/
 ```
 
-Full documentation: [`docs/creator-guide.md`](docs/creator-guide.md) (creator guide) and
-[`docs/handoff.md`](docs/handoff.md) (developer handoff notes).
+### Running the hub
+
+```sh
+HUB_TOKEN=$(openssl rand -hex 24) HUB_PORT=4000 npm run hub
+```
+
+Deployment guide (systemd, Caddy + wss, bare-ws quick path):
+[`docs/hub-deployment.md`](docs/hub-deployment.md).
 
 ### Structure
 
 ```
-lib/            Reusable core (shared across all PNDS projects — skeleton)
-audio/          Work audio layer (fader → synth parameter mapping)
-public/         Browser side (performer + monitor dual-role single page)
-supercollider/  SynthDef sources, debug bridge, compiled artifacts
-test/           Regression tests
-docs/           Creator guide and handoff notes
+hub/      The relay: hub.js + tnd-hub.service (systemd unit)
+lib/      Reusable core (config / network / health / lifecycle /
+          qr / theme-follow)
+public/   Browser side (performer + monitor pages)
+test/     node --test (config / integration / hub / theme-follow)
+docs/     Hub deployment guide
 ```
 
 ### License
@@ -46,36 +66,52 @@ MIT — see [LICENSE](LICENSE).
 
 ## 中文
 
-PNDS 数字乐谱工程模板：可直接运行的骨架 + 最小功能实现。基于此模板创建新的 PNDS 数字乐谱工程。
+跨互联网网络诊断 PNDS 工程：在 telematic（hub/star 星型）演出前回答
+conductor 的 go/no-go 问题——此刻整个网络适合演奏吗？如果不适合，问题
+在哪个节点、哪一段？
 
-### 功能
+两层测量（issue #1，v0.1.0 施工中）：
 
-- **演奏者界面**：手机横屏双推子（AMP / FREQ），FREQ 推子带半音音高刻度（中心音及上下五度标音名且刻度高亮），状态文字下方有三档音区 switch（1 低音 / 2 中音 / 3 高音）切换频率区段，圆弧几何直观触摸操控
-- **音频**：每客户端一个 sine voice，16 声道输出（默认奇偶 id 分到声道 1/2）
-- **监视端**：实时显示客户端 amp / freq，可重新分配每个客户端的输出声道
-- **断线重连**：客户端断线后自动恢复 id 与推子状态
-- **主题跟随**：在 PNDS App（≥ v1.2.3）中运行时，monitor 页实时跟随 App 主题（全部四套）——spec §5.3 可选契约，本模板经 p5 的 `onTheme` 回调消费（`lib/theme-follow.js`，经 `/__pnds/theme-follow.js` 加载）
-- **三音频模式**：`internal`（scsynth）、`external`（自定义 OSC）、`none`（仅页面/网络）
+- **hub 腿**——score server ↔ 公网 hub，持续测量。延迟只标数字；抖动、
+  丢包、重连这类质量指标才决定状态颜色。
+- **本地腿**——performer ↔ 本站 score server 的局域网 Wi-Fi（Local
+  Network Diagnostics 逻辑移植）。
 
-### 开始
+工程自带中继：[`hub/hub.js`](hub/hub.js)——Socket.IO hub（token 鉴权、
+房间、hub 接收时间戳），从源码部署在公网 VPS 上。无音频、无
+SuperCollider：工程仅以 audio mode `none` 运行。
+
+### 状态
+
+v0.1.0 基础（issue #2）：去模板化后的 score server（performer /
+monitor 双 server、health、主题跟随）+ 可部署的 hub。hub 腿测量、花
+视图与本地腿诊断随 issue #3–#5 落地。
+
+### 快速开始
 
 ```sh
 npm install
-npm run dev:none    # 无音频运行
+npm start        # 演奏者页 http://<局域网IP>:6868/，监视端 :6869/
 ```
 
-完整说明见 [`docs/creator-guide.md`](docs/creator-guide.md)（创作指南）与
-[`docs/handoff.md`](docs/handoff.md)（开发交接笔记）。
+### 运行 hub
+
+```sh
+HUB_TOKEN=$(openssl rand -hex 24) HUB_PORT=4000 npm run hub
+```
+
+部署指南（systemd、Caddy + wss、裸 ws 快速路径）：
+[`docs/hub-deployment.md`](docs/hub-deployment.md)。
 
 ### 结构
 
 ```
-lib/            可复用核心（PNDS 工程通用，模板骨架）
-audio/          作品音频语义（推子 → synth 参数映射）
-public/         浏览器端（performer + monitor 双角色单页）
-supercollider/  SynthDef 源码、debug bridge、编译产物
-test/           回归测试
-docs/           指南与交接文档
+hub/      中继：hub.js + tnd-hub.service（systemd unit）
+lib/      可复用核心（config / network / health / lifecycle /
+          qr / theme-follow）
+public/   浏览器端（performer + monitor 页面）
+test/     node --test（config / integration / hub / theme-follow）
+docs/     hub 部署指南
 ```
 
 ### 许可证

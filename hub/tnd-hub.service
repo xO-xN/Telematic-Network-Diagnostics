@@ -1,0 +1,44 @@
+# Telematic Network Diagnostics — hub systemd unit.
+#
+# Install (see docs/hub-deployment.md for the full walkthrough):
+#   sudo cp hub/tnd-hub.service /etc/systemd/system/tnd-hub.service
+#   # create the environment file with your HUB_TOKEN (root, mode 600):
+#   sudo install -m 600 /dev/null /etc/tnd-hub.env
+#   sudo tee /etc/tnd-hub.env >/dev/null <<EOF
+#   HUB_TOKEN=<openssl rand -hex 24>
+#   HUB_PORT=4000
+#   HUB_HOST=127.0.0.1
+#   EOF
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now tnd-hub
+#
+# The token lives in /etc/tnd-hub.env (not in this unit file) so it is
+# never world-readable: unit files are 644 by default.
+#
+# HUB_HOST=127.0.0.1 + a TLS reverse proxy (Caddy) in front is the
+# recommended production shape; drop the HUB_HOST line and open the
+# firewall instead for the bare-ws quick path.
+
+[Unit]
+Description=Telematic Network Diagnostics hub (Socket.IO relay)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tnd-hub
+Group=tnd-hub
+WorkingDirectory=/opt/tnd
+EnvironmentFile=/etc/tnd-hub.env
+ExecStart=/usr/bin/node hub/hub.js
+Restart=on-failure
+RestartSec=3
+
+# Hardening: the hub needs no filesystem writes and no privileges.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

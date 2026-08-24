@@ -295,134 +295,45 @@ test('monitor page wiring: options route themes to non-CSS consumers', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Template wiring: the p5 page consumes themes via the onTheme callback
+// Page wiring: theme-follow loads only in the monitor branch
 // ---------------------------------------------------------------------------
 
-test('template wiring: the ?theme= first frame reaches a late subscriber', () => {
-  // index.html loads theme-follow.js BEFORE monitor.js, so the initial
-  // delivery can fire before the page script exists. The options hook
-  // stashes the delivery; monitor.js replays it at startup — this test
-  // runs that exact hand-off against the real module.
+test('page wiring: the ?theme= first frame reaches the onTheme hook at load time', () => {
+  // theme-follow.js self-wires on load; a ?theme= parameter delivers
+  // to the options hook immediately — a page that defers its own
+  // drawing to startup can rely on that early delivery.
   const stash = []
-  const earlyPage = loadMonitorPage('?theme=stage', {
+  loadMonitorPage('?theme=stage', {
     applyVariables: false,
     onTheme: (name, palette) => stash.push({ name, palette }),
   })
 
   assert.equal(stash.length, 1, 'the initial ?theme= delivery fired early')
   assert.equal(stash[0].name, 'stage')
-  // No CSS writes on this page — the canvas consumes the palette.
-  assert.equal(earlyPage.properties.size, 0)
-
-  // The late subscriber (monitor.js) finds the stashed palette.
   assert.equal(stash[0].palette.bg, '#0b0c10')
 })
 
-test('template wiring: theme-follow loads only in the monitor branch', () => {
+test('page wiring: theme-follow loads only in the monitor branch', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8')
 
-  // The options and the module load inside the monitor branch, before
-  // the monitor script itself (anchored on the document.write calls —
-  // comments may mention any of the names).
+  // The module load sits inside the monitor branch (anchored on the
+  // document.write call — comments may mention the name too).
   const monitorBranch = html.slice(html.indexOf('PNDS_IS_MONITOR'))
   assert.match(
     monitorBranch,
-    /PNDS_THEME_OPTIONS[\s\S]*document\.write\(\s*'\\x3Cscript src="\/__pnds\/theme-follow\.js[\s\S]*document\.write\(\s*'\\x3Cscript src="monitor\.js/,
-    'options → module → monitor.js, in that order',
+    /if \(window\.PNDS_IS_MONITOR\) \{[\s\S]*document\.write\(\s*'\\x3Cscript src="\/__pnds\/theme-follow\.js/,
+    'the monitor branch loads the theme bridge',
   )
 
-  // …and the performer script has no hand in theming.
-  const performer = fs.readFileSync(
-    path.join(__dirname, '..', 'public', 'performer.js'),
-    'utf8',
+  // …and the performer branch has no hand in theming: everything after
+  // the theme write is the page body, with no second module load.
+  const themeLoad = monitorBranch.indexOf('__pnds/theme-follow.js')
+  assert.ok(themeLoad !== -1)
+  assert.equal(
+    monitorBranch.indexOf('__pnds/theme-follow.js', themeLoad + 1),
+    -1,
+    'the theme bridge is loaded exactly once',
   )
-  assert.doesNotMatch(performer, /pnds:theme|PNDS_THEME/)
-})
-
-// ---------------------------------------------------------------------------
-// The real monitor page (p5 stubbed): theme delivery → control styling
-// ---------------------------------------------------------------------------
-
-test('monitor.js: a delivered palette restyles the p5 controls, malformed palettes never throw', () => {
-  // monitor.js needs a p5 surface; only the pieces setup() touches are
-  // stubbed, and the control stubs record style() calls — the external
-  // behavior under test.
-  const fakeControl = () => {
-    const styles = new Map()
-    return {
-      styles,
-      style: (name, value) => styles.set(name, value),
-      mousePressed: () => {},
-      changed: () => {},
-      option: () => {},
-      selected: () => {},
-      remove: () => {},
-      position: () => {},
-      size: () => {},
-      parent: () => {},
-    }
-  }
-
-  const button = fakeControl()
-  const page = {
-    location: { hostname: '127.0.0.1', search: '' },
-    windowWidth: 800,
-    windowHeight: 600,
-    width: 800,
-    height: 600,
-    document: { documentElement: { style: {} } },
-    PNDS: { performerPort: 6868, monitorPort: 6869, outputChannels: 16 },
-    PNDSClient: {
-      connectMonitor: () => ({
-        onClients: () => {},
-        resetIds: () => {},
-        setSeat: () => {},
-        setOut: () => {},
-      }),
-    },
-    io: () => {},
-    createCanvas: () => ({ parent: () => {} }),
-    createImg: () => fakeControl(),
-    createButton: () => button,
-    createSelect: () => fakeControl(),
-  }
-  page.self = page
-  page.window = page
-
-  vm.runInContext(
-    fs.readFileSync(path.join(__dirname, '..', 'public', 'monitor.js'), 'utf8'),
-    vm.createContext(page),
-  )
-
-  assert.equal(typeof page.applyPndsTheme, 'function')
-
-  page.setup()
-  page.applyPndsTheme('stage', THEME_PALETTES.stage)
-
-  assert.equal(button.styles.get('background'), '#16181f')
-  assert.equal(button.styles.get('color'), '#eceef5')
-  assert.equal(button.styles.get('border'), '1px solid #99a1b5')
-  // The native color-scheme follows the palette (dark stage).
-  assert.equal(page.document.documentElement.style.colorScheme, 'dark')
-
-  // Re-delivery lands on the same values (idempotent).
-  page.applyPndsTheme('stage', THEME_PALETTES.stage)
-  assert.equal(button.styles.get('background'), '#16181f')
-
-  // A light palette flips the color-scheme the other way.
-  page.applyPndsTheme('lavender', THEME_PALETTES.lavender)
-  assert.equal(page.document.documentElement.style.colorScheme, 'light')
-  assert.equal(button.styles.get('background'), '#ffffff')
-  assert.equal(button.styles.get('color'), '#171a2b')
-
-  // Application is atomic: a palette missing bg or text keeps the
-  // previous COMPLETE theme — keys never mix across themes.
-  assert.doesNotThrow(() => page.applyPndsTheme('?', {}))
-  assert.doesNotThrow(() =>
-    page.applyPndsTheme('?', { ...THEME_PALETTES.brutal, text: '' }))
-  assert.equal(button.styles.get('background'), '#ffffff')
-  assert.equal(button.styles.get('color'), '#171a2b')
-  assert.equal(page.document.documentElement.style.colorScheme, 'light')
 })
 
 // ---------------------------------------------------------------------------
