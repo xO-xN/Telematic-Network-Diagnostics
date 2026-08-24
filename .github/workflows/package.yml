@@ -8,9 +8,13 @@ name: Package release
 # score project has to ship its production dependencies already installed.
 #
 # The bundle is assembled from an explicit ALLOWLIST rather than by
-# excluding unwanted paths: anything not named below (docs, tests,
-# SuperCollider sources, CI config) stays out of the performance bundle by
-# construction.
+# excluding unwanted paths: anything not named below (hub/ — the relay
+# ships as source for VPS deployment, not into performances — docs,
+# tests, CI config) stays out of the performance bundle by construction.
+#
+# The artifact name follows the registry format `<id>-<tag>.pnds` with
+# the manifest's id, so PNDS App can associate the bundle with the
+# project.
 
 on:
   push:
@@ -29,13 +33,14 @@ jobs:
       contents: write
     env:
       VERSION: ${{ github.ref_type == 'tag' && github.ref_name || inputs.version }}
-      BUNDLE: dist/PNDS Template
+      BUNDLE: dist/Telematic Network Diagnostics
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          # Matches the Node runtime range declared in package.json.
+          # The Node line PNDS App bundles as its score-server sidecar
+          # (>=24 <25); the bundle's node_modules are built on the same.
           node-version: '24.18.1'
 
       - name: Install production dependencies
@@ -43,10 +48,9 @@ jobs:
 
       - name: Assemble runnable project bundle
         run: |
-          mkdir -p "$BUNDLE/supercollider"
+          mkdir -p "$BUNDLE"
           cp manifest.json package.json server.js "$BUNDLE/"
-          cp -R lib audio public node_modules "$BUNDLE/"
-          cp -R supercollider/synthdefs "$BUNDLE/supercollider/"
+          cp -R lib public node_modules "$BUNDLE/"
           cp .github/bundle/README.md "$BUNDLE/README.md"
           find "$BUNDLE" -name '.DS_Store' -delete
           find "$BUNDLE" -name '.lh' -type d -prune -exec rm -rf {} +
@@ -64,7 +68,7 @@ jobs:
             }
             console.log(`all ${deps.length} production dependencies present`);
           '
-          for f in docs test .github .git supercollider/source supercollider/debug \
+          for f in docs test hub .github .git \
                    .gitignore package-lock.json; do
             if [ -e "$BUNDLE/$f" ]; then
               echo "::error::$f must not be in the performance bundle"
@@ -87,6 +91,7 @@ jobs:
           done
           cat /tmp/health.json
           grep -q '"status":"ready"' /tmp/health.json
+          grep -q '"audioMode":"none"' /tmp/health.json
           kill "$SERVER_PID"
 
       - name: Create .pnds bundle
@@ -99,26 +104,32 @@ jobs:
             "sourcePlatform": "$(echo "${RUNNER_OS}-${RUNNER_ARCH}" | tr '[:upper:]' '[:lower:]')"
           }
           EOF
-          cd dist && zip -q -r -X "../PNDS-Template-${VERSION}.pnds" "PNDS Template" pnds-bundle.json
-          cd .. && ls -lh "PNDS-Template-${VERSION}.pnds"
+          cd dist && zip -q -r -X "../telematic-network-diagnostics-${VERSION}.pnds" "Telematic Network Diagnostics" pnds-bundle.json
+          cd .. && ls -lh "telematic-network-diagnostics-${VERSION}.pnds"
 
       - name: Create draft release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.VERSION }}
-          name: PNDS Template ${{ env.VERSION }}
+          name: Telematic Network Diagnostics ${{ env.VERSION }}
           draft: true
-          files: PNDS-Template-*.pnds
+          files: telematic-network-diagnostics-*.pnds
           body: |
-            A PNDS score project skeleton with minimal working features.
+            A PNDS score project for cross-internet network diagnostics:
+            it measures the hub leg (score server ↔ public hub) and the
+            local legs (performers ↔ score server) of a telematic
+            hub/star setup and shows every site the same flower view.
 
             > [!IMPORTANT]
-            > Download **`PNDS-Template-${{ env.VERSION }}.pnds`** from the Assets below.
+            > Download **`telematic-network-diagnostics-${{ env.VERSION }}.pnds`** from the Assets below.
             >
             > Do **not** download "Source code (zip)" or "Source code (tar.gz)",
             > and do not use the green "Code → Download ZIP" button. Those contain
             > the source only, without the installed Node.js dependencies.
             >
             > The `.pnds` bundle installs directly into PNDS App: double-click it
-            > (or press ⌘O in the App). It unpacks the `PNDS Template` project with
-            > its `node_modules` directory ready to run.
+            > (or press ⌘O in the App). It unpacks the `Telematic Network
+            > Diagnostics` project with its `node_modules` directory ready to run.
+            >
+            > The relay hub is NOT part of the bundle — it deploys from source
+            > onto a public VPS. See `docs/hub-deployment.md` in the repository.

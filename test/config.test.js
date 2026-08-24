@@ -100,3 +100,41 @@ test("package.json is de-templatized: identity, no audio dependencies", () => {
   assert.equal("osc-min" in packageJson.dependencies, false);
   assert.equal("osc-min" in (packageJson.devDependencies || {}), false);
 });
+
+// ------------------------------------------------------------
+// Release pipeline guard (issue #6): the workflow that builds the
+// .pnds carries the TND identity, the registry artifact format, and
+// keeps hub/ docs/ test/ out of the performance bundle.
+// ------------------------------------------------------------
+
+test("release workflow is de-templatized: TND identity, registry artifact name", () => {
+  const workflow = fs.readFileSync(
+    path.join(PROJECT_ROOT, ".github", "workflows", "package.yml"),
+    "utf8",
+  );
+
+  assert.doesNotMatch(workflow, /PNDS[- ]Template/i, "template identity is gone");
+  assert.match(workflow, /dist\/Telematic Network Diagnostics/);
+  assert.match(workflow, /telematic-network-diagnostics-\$\{VERSION\}\.pnds/);
+
+  // hub/, docs/, test/ stay out: named in the verification's forbidden
+  // list, and never copied by the allowlist step that precedes it.
+  assert.match(workflow, /for f in docs test hub/);
+
+  const assemble = workflow.slice(
+    workflow.indexOf("Assemble runnable"),
+    workflow.indexOf("Verify bundle"),
+  );
+
+  assert.doesNotMatch(assemble, /\bhub\b/, "the allowlist never copies hub/");
+  assert.match(assemble, /cp -R lib public node_modules/);
+
+  // The smoke keeps the audio-none launch shape and asserts it.
+  const smoke = workflow.slice(
+    workflow.indexOf("Smoke-test"),
+    workflow.indexOf("Create .pnds"),
+  );
+
+  assert.match(smoke, /--audio-mode none/);
+  assert.match(smoke, /audioMode":"none/);
+});
