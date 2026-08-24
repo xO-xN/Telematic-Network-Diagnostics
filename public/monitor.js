@@ -44,7 +44,6 @@ app.innerHTML =
   "</div>" +
   '<div class="form-actions">' +
   '<button id="b-connect">连接 · Connect</button>' +
-  '<button id="b-burst" disabled>突发测试 · Burst</button>' +
   "</div>" +
   '<div class="hint">表单保存在浏览器 localStorage，重开无需重填；' +
   "App 注入的 env（PNDS_HUB_URL 等）会作为预填默认值。</div>" +
@@ -70,7 +69,6 @@ const tokenInput = document.getElementById("f-token");
 const roomInput = document.getElementById("f-room");
 const nodeInput = document.getElementById("f-node");
 const connectButton = document.getElementById("b-connect");
-const burstButton = document.getElementById("b-burst");
 const logEl = document.getElementById("log");
 
 let state = null;
@@ -101,7 +99,6 @@ socket.on("connect", () => {
 });
 
 connectButton.addEventListener("click", () => submitConfig(true));
-burstButton.addEventListener("click", () => socket.emit(P.events.hubBurst));
 
 // ------------------------------------------------------------
 // Form: localStorage persistence + env prefill
@@ -191,7 +188,6 @@ function render() {
   prefillForm(); // first render only (guard inside)
   renderBanner();
   renderNodeCard();
-  renderButtons();
   renderLog();
 }
 
@@ -216,6 +212,8 @@ function renderNodeCard() {
   nodeNameEl.textContent = config
     ? config.nodeId + (info && info.probing === "burst" ? " · burst" : "")
     : "This node";
+  // The probe cycle (burst ↔ calm) runs automatically, LND-style; the
+  // chip in the name reflects whichever phase is live.
 
   nodeStatusEl.textContent = info ? info.status.toUpperCase() : "—";
   nodeCopyEl.textContent = info ? P.statusCopy[info.status] || "" : "";
@@ -236,11 +234,6 @@ function renderNodeCard() {
       metricRow("Samples 样本 (15s)", String(summary.samples ?? "—")),
     );
   }
-}
-
-function renderButtons() {
-  const info = leg();
-  burstButton.disabled = !(info && info.connected);
 }
 
 function renderLog() {

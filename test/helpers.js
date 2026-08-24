@@ -86,9 +86,39 @@ function stopProcess(child) {
   });
 }
 
+// Fails immediately with a clear message when a port is already being
+// served — typically this same project opened in PNDS App while the
+// tests run. Without the guard, the spawned server cannot bind and the
+// test times out polling a FOREIGN server, which is far more confusing.
+async function assertPortsFree(ports) {
+  for (const port of ports) {
+    const busy = await new Promise((resolve) => {
+      const probe = net.connect({ port, host: "127.0.0.1" });
+
+      probe.once("connect", () => {
+        probe.destroy();
+        resolve(true);
+      });
+      probe.once("error", () => {
+        probe.destroy();
+        resolve(false);
+      });
+    });
+
+    if (busy) {
+      throw new Error(
+        `port ${port} is already in use — another instance of this project ` +
+          `is being served (PNDS App, or a stray server). Stop it before ` +
+          `running the integration tests.`,
+      );
+    }
+  }
+}
+
 module.exports = {
   findFreePort,
   waitForPort,
   spawnHub,
   stopProcess,
+  assertPortsFree,
 };

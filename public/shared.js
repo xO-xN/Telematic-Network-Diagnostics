@@ -53,11 +53,9 @@
     events: {
       // Browser → score server:
       //   config: submit the connection form { url, token, room, nodeId }
-      //   burst:  trigger one on-demand burst window
       // Score server → browser:
       //   state:  the full hub-leg snapshot (token never echoed back)
       hubConfig: "hub:config",
-      hubBurst: "hub:burst",
       hubState: "hub:state",
     },
   };

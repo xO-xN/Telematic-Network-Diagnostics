@@ -30,8 +30,9 @@ v0.1.0 base (issue #2): the de-templatized score server (performer /
 monitor dual server, health, theme following) and the deployable hub.
 Hub leg + monitor connect form (issue #3) landed: the score server
 connects out to the hub (env or form), measures the hub leg
-continuously (1 Hz echo baseline, on-demand 30 msg/s bursts) and the
-monitor shows live RTT p50/p95, the quality color (jitter/loss/
+continuously — the automatic probe cycle matches the local leg's
+rhythm (2 s burst at 30 msg/s ↔ 2 s calm at 1 Hz, no buttons) — and
+the monitor shows live RTT p50/p95, the quality color (jitter/loss/
 reconnects — latency never colors), the one-way estimate ≈ RTT/2 and
 the event log. The flower view and the local leg land with issues
 #4–#5.
@@ -109,9 +110,10 @@ SuperCollider：工程仅以 audio mode `none` 运行。
 v0.1.0 基础（issue #2）：去模板化后的 score server（performer /
 monitor 双 server、health、主题跟随）+ 可部署的 hub。hub 腿测量 +
 monitor 连接表单（issue #3）已落地：score server 出站连接 hub（env 或
-表单），持续测量 hub 腿（1 Hz echo 基线 + 按需 30 msg/s 突发），monitor
-实时显示 RTT p50/p95、质量色（抖动/丢包/重连——延迟不参与染色）、单程
-估计 ≈ RTT/2 与事件日志。花视图与本地腿随 issue #4–#5 落地。
+表单），持续测量 hub 腿——探测节奏与本地腿一致（2 秒 30 msg/s 突发 ↔
+2 秒 1 Hz 平静自动交替，无任何按钮），monitor 实时显示 RTT p50/p95、质
+量色（抖动/丢包/重连——延迟不参与染色）、单程估计 ≈ RTT/2 与事件日志。
+花视图与本地腿随 issue #4–#5 落地。
 
 ### 快速开始
 

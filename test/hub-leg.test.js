@@ -3,8 +3,8 @@
 // and the core principle is pinned here: latency MAGNITUDE never
 // participates in the coloring (a 250 ms but stable link is green).
 // The HubLeg class runs against a fake socket with millisecond
-// timings: probe/echo/loss bookkeeping, reconnect counting, the burst
-// window.
+// timings: probe/echo/loss bookkeeping, reconnect counting, the
+// automatic burst↔calm phase cycle.
 
 const assert = require("node:assert/strict");
 const test = require("node:test");
@@ -230,6 +230,30 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Polls the predicate every 5 ms until it holds (or fails with the
+// message after the timeout).
+function waitFor(predicate, timeoutMs, message) {
+  return new Promise((resolve, reject) => {
+    const startedAt = Date.now();
+
+    const tick = () => {
+      if (predicate()) {
+        resolve();
+        return;
+      }
+
+      if (Date.now() - startedAt >= timeoutMs) {
+        reject(new Error(message));
+        return;
+      }
+
+      setTimeout(tick, 5);
+    };
+
+    tick();
+  });
+}
+
 function makeLeg(socket, overrides = {}) {
   return new HubLeg({
     url: "ws://hub.test",
@@ -241,7 +265,8 @@ function makeLeg(socket, overrides = {}) {
     now: Date.now,
     baselineIntervalMs: 10,
     burstIntervalMs: 3,
-    burstDurationMs: 30,
+    burstPhaseMs: 30,
+    calmPhaseMs: 30,
     probeTimeoutMs: 40,
     ...overrides,
   });
@@ -267,7 +292,10 @@ test("HubLeg: baseline probes measure RTT, warm-up leaves gray→green", async (
   assert.ok(snapshot.summary.rttP50 >= 0);
   // Loopback-stable link: quality is green, never red from "latency".
   assert.equal(snapshot.status, STATUS.GREEN);
-  assert.equal(snapshot.probing, "baseline");
+  assert.ok(
+    snapshot.probing === "burst" || snapshot.probing === "calm",
+    `unexpected phase: ${snapshot.probing}`,
+  );
 });
 
 test("HubLeg: dropped echoes become losses and drive the status red", async () => {
@@ -319,45 +347,62 @@ test("HubLeg: disconnect flips red immediately; reconnect counts and recovers", 
   assert.match(up.reason, /1 reconnect/i);
 });
 
-test("HubLeg: on-demand burst sends at ~30 msg/s for its window, then stops", async () => {
+test("HubLeg: the phase cycle runs automatically — burst density, calm baseline, repeating", async () => {
   const socket = new FakeSocket({ echoLatencyMs: 0 });
   const leg = makeLeg(socket);
 
   leg.start();
   socket.deliver("connect");
-  await delay(30); // a few baseline probes first
 
-  assert.equal(leg.burst(), true);
+  // The cycle starts in the burst phase the moment the link is up
+  // (same shape as LND) — no manual trigger anywhere.
+  await delay(2);
   assert.equal(leg.snapshot().probing, "burst");
 
-  const before = socket.sent.length;
-  await delay(30); // the burst window itself (30 ms at 3 ms cadence)
-  const during = socket.sent.length - before;
+  const burstStart = socket.sent.length;
+  await delay(30); // the burst phase itself (30 ms at 3 ms cadence)
+  const burstSends = socket.sent.length - burstStart;
 
-  assert.ok(during >= 8, `expected dense burst sends, got ${during}`);
+  assert.ok(burstSends >= 8, `expected dense burst sends, got ${burstSends}`);
 
-  // The window ends: probing returns to baseline and sends thin out.
-  await delay(25);
+  // Then the calm phase: back to the 1 Hz baseline cadence.
+  await waitFor(
+    () => leg.snapshot().probing === "calm",
+    200,
+    "phase never returned to calm",
+  );
 
-  const snapshot = leg.snapshot();
-  assert.equal(snapshot.probing, "baseline");
+  const calmStart = socket.sent.length;
+  await delay(30);
+  const calmSends = socket.sent.length - calmStart;
 
-  const types = snapshot.events.map((event) => event.type);
-  assert.ok(types.includes("burst started"));
-  assert.ok(types.includes("burst ended"));
+  assert.ok(calmSends <= 3, `expected thin calm sends, got ${calmSends}`);
 
-  // A second burst while one runs is refused; after it ends, another
-  // can start.
+  // …and the cycle repeats.
+  await waitFor(
+    () => leg.snapshot().probing === "burst",
+    200,
+    "the cycle never returned to burst",
+  );
+
+  // Phase switches stay out of the event log (they fire every cycle;
+  // the log is for connect/disconnect).
+  const types = leg.snapshot().events.map((event) => event.type);
+  assert.equal(types.includes("burst started"), false);
+  assert.equal(types.includes("burst ended"), false);
+
   leg.stop();
 });
 
-test("HubLeg: burst is refused while disconnected", () => {
+test("HubLeg: no probes and no phase cycle while disconnected", async () => {
   const socket = new FakeSocket();
   const leg = makeLeg(socket);
 
   leg.start(); // never connected
+  await delay(30);
 
-  assert.equal(leg.burst(), false);
+  assert.equal(socket.sent.filter(([event]) => event === "echo").length, 0);
+  assert.equal(leg.snapshot().probing, "calm");
   leg.stop();
 });
 

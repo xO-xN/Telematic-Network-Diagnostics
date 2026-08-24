@@ -10,7 +10,13 @@ const path = require("node:path");
 
 const { io } = require("socket.io-client");
 const { events: EVENTS } = require("../public/shared");
-const { findFreePort, waitForPort, spawnHub, stopProcess } = require("./helpers");
+const {
+  findFreePort,
+  waitForPort,
+  spawnHub,
+  stopProcess,
+  assertPortsFree,
+} = require("./helpers");
 
 const PROJECT_ROOT = path.join(__dirname, "..");
 const PERFORMER_URL = "http://127.0.0.1:6868";
@@ -52,6 +58,8 @@ function waitForHealthReady() {
 
 
 test("score server: TND identity, health ready, pages + theme bridge served", async (t) => {
+  await assertPortsFree([6868, 6869]);
+
   const server = spawn(process.execPath, ["server.js", "--audio-mode", "none"], {
     cwd: PROJECT_ROOT,
     stdio: "ignore",
@@ -154,6 +162,8 @@ function waitForHubState(socket, predicate, timeoutMs = 15000) {
 }
 
 test("hub leg: env auto-connect, live stats, burst, disconnect/reconnect, form channel", async (t) => {
+  await assertPortsFree([6868, 6869]);
+
   const hubPort = await findFreePort();
   const hub = spawnHub(hubPort, { token: HUB_TOKEN });
   t.after(() => stopProcess(hub));
@@ -210,23 +220,37 @@ test("hub leg: env auto-connect, live stats, burst, disconnect/reconnect, form c
     "one-way estimate is RTT p50 / 2",
   );
   assert.equal(measured.leg.status, "green", "loopback-stable link is green");
-  assert.equal(measured.leg.probing, "baseline");
 
-  // --- on-demand burst: probing flag flips, samples pour in ---
+  // --- automatic phase cycle: burst ↔ calm, the window keeps rolling ---
+  // No manual trigger — the cycle runs with the connection (LND's
+  // shape: it starts in burst, then alternates). Wait for a burst
+  // phase, then a calm phase, then another burst, and check the
+  // samples kept flowing throughout.
+  await waitForHubState(
+    monitor,
+    (state) => state.leg && state.leg.probing === "burst",
+  );
+
   const samplesBefore = measured.leg.summary.samples;
 
-  monitor.emit(EVENTS.hubBurst);
-
-  await waitForHubState(monitor, (state) => state.leg && state.leg.probing === "burst");
-  const burstDone = await waitForHubState(
+  await waitForHubState(
     monitor,
-    (state) => state.leg && state.leg.probing === "baseline" && state.leg.summary.samples >= samplesBefore + 60,
+    (state) => state.leg && state.leg.probing === "calm",
+  );
+  await waitForHubState(
+    monitor,
+    (state) => state.leg && state.leg.probing === "burst",
+  );
+
+  const afterCycles = await waitForHubState(
+    monitor,
+    (state) => state.leg && state.leg.summary.samples >= samplesBefore + 40,
     15000,
   );
 
   assert.ok(
-    burstDone.leg.summary.samples >= samplesBefore + 60,
-    `burst added many samples: ${samplesBefore} → ${burstDone.leg.summary.samples}`,
+    afterCycles.leg.summary.samples >= samplesBefore + 40,
+    `the cycles kept the window rolling: ${samplesBefore} → ${afterCycles.leg.summary.samples}`,
   );
 
   // --- the hub drops: red at once, with an event ---

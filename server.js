@@ -7,8 +7,9 @@
 // - serves the theme bridge (/__pnds/theme-follow.js) on the monitor port
 // - offers the performer-page QR code on the monitor port
 // - measures the hub leg (score server ↔ public hub, lib/hub-leg.js):
-//   outbound socket.io-client connection, 1 Hz echo baseline, on-demand
-//   30 msg/s bursts, live stats broadcasts to the monitor page
+//   outbound socket.io-client connection with the LND-style automatic
+//   probe cycle (2 s burst @ 30 msg/s ↔ 2 s calm @ 1 Hz), live stats
+//   broadcasts to the monitor page
 // - shuts down cleanly on SIGINT / SIGTERM
 //
 // Hub connection, two channels (issue #3, the Phase 0 validation
@@ -287,12 +288,6 @@ io.on("connection", (socket) => {
 
   socket.on(EVENTS.hubConfig, (config) => {
     configureHubLeg(config || {});
-  });
-
-  socket.on(EVENTS.hubBurst, () => {
-    if (hubLeg) {
-      hubLeg.burst();
-    }
   });
 });
 

@@ -279,16 +279,6 @@ header .sub {
   cursor: default;
 }
 
-.form-actions button#b-burst {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-
-.form-actions button#b-burst:disabled {
-  background: var(--track);
-  color: var(--muted);
-}
-
 .hint {
   font-size: 11px;
   color: var(--muted);
