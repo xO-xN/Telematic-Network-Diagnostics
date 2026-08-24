@@ -67,12 +67,15 @@ test("parseCliOptions: --help asked, --audio-mode accepted and ignored", () => {
 // ------------------------------------------------------------
 
 test("the template's audio stack is gone from the repo", () => {
+  // lib/players.js is NOT on this list: the template's performer
+  // registry was cut in #2, and #5 reintroduced the name with the
+  // Local-Network-Diagnostics port (claim tokens for the local-leg
+  // probes — network-only, no audio coupling).
   const forbidden = [
     "audio",
     "supercollider",
     "lib/audio-engine.js",
     "lib/osc-transport.js",
-    "lib/players.js",
     "lib/protocol.js",
     "lib/seats-store.js",
     "public/libraries",

@@ -126,7 +126,7 @@ test("score server: TND identity, health ready, pages + theme bridge served", as
 // ------------------------------------------------------------
 
 // A fake monitor page: one socket to the score server, collecting the
-// 1 Hz hub:state broadcasts until one satisfies the predicate.
+// 1 Hz state broadcasts until one satisfies the predicate.
 function connectMonitor() {
   return new Promise((resolve, reject) => {
     const socket = io(PERFORMER_URL, { reconnection: false, timeout: 5000 });
@@ -148,22 +148,65 @@ function connectMonitor() {
   });
 }
 
-function waitForHubState(socket, predicate, timeoutMs = 15000) {
+function waitForState(socket, predicate, timeoutMs = 15000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
-      socket.off(EVENTS.hubState, onState);
-      reject(new Error("hub:state timeout"));
+      socket.off(EVENTS.state, onState);
+      reject(new Error("state timeout"));
     }, timeoutMs);
 
     const onState = (state) => {
       if (predicate(state)) {
         clearTimeout(timer);
-        socket.off(EVENTS.hubState, onState);
+        socket.off(EVENTS.state, onState);
         resolve(state);
       }
     };
 
-    socket.on(EVENTS.hubState, onState);
+    socket.on(EVENTS.state, onState);
+  });
+}
+
+// A fake performer page: joins with the (optional) claim token and
+// answers every probe immediately — the phone in the demo, as a test.
+// Resolves { socket, joined } once the server hands back the id.
+function connectPerformerAt(url, token = null) {
+  return new Promise((resolve, reject) => {
+    const socket = io(url, { reconnection: false, timeout: 5000 });
+    const timer = setTimeout(() => {
+      socket.close();
+      reject(new Error("performer connect timeout"));
+    }, 5000);
+
+    socket.on("connect", () => {
+      socket.emit(EVENTS.join, { token });
+    });
+
+    socket.on(EVENTS.rejected, (data) => {
+      clearTimeout(timer);
+      socket.close();
+      reject(new Error("join rejected: " + (data && data.reason)));
+    });
+
+    socket.on(EVENTS.joined, (data) => {
+      clearTimeout(timer);
+      socket.on(EVENTS.probe, (payload) => {
+        // t0/t1 are processing timestamps only; the RTT is measured
+        // server-side, so constants are fine here.
+        socket.emit(EVENTS.ack, {
+          seq: payload && payload.seq,
+          t0: 1,
+          t1: 2,
+        });
+      });
+      resolve({ socket, joined: data });
+    });
+
+    socket.on("connect_error", (error) => {
+      clearTimeout(timer);
+      socket.close();
+      reject(error);
+    });
   });
 }
 
@@ -194,7 +237,7 @@ test("hub leg: env auto-connect, live stats, burst, disconnect/reconnect, form c
   t.after(() => monitor.close());
 
   // --- env channel: the server connected to the hub at boot ---
-  const connected = await waitForHubState(
+  const connected = await waitForState(
     monitor,
     (state) => state.configured && state.leg && state.leg.connected,
   );
@@ -209,7 +252,7 @@ test("hub leg: env auto-connect, live stats, burst, disconnect/reconnect, form c
   );
 
   // --- live numbers appear on their own (auto-started, no button) ---
-  const measured = await waitForHubState(
+  const measured = await waitForState(
     monitor,
     (state) =>
       state.leg &&
@@ -232,23 +275,23 @@ test("hub leg: env auto-connect, live stats, burst, disconnect/reconnect, form c
   // shape: it starts in burst, then alternates). Wait for a burst
   // phase, then a calm phase, then another burst, and check the
   // samples kept flowing throughout.
-  await waitForHubState(
+  await waitForState(
     monitor,
     (state) => state.leg && state.leg.probing === "burst",
   );
 
   const samplesBefore = measured.leg.summary.samples;
 
-  await waitForHubState(
+  await waitForState(
     monitor,
     (state) => state.leg && state.leg.probing === "calm",
   );
-  await waitForHubState(
+  await waitForState(
     monitor,
     (state) => state.leg && state.leg.probing === "burst",
   );
 
-  const afterCycles = await waitForHubState(
+  const afterCycles = await waitForState(
     monitor,
     (state) => state.leg && state.leg.summary.samples >= samplesBefore + 40,
     15000,
@@ -262,7 +305,7 @@ test("hub leg: env auto-connect, live stats, burst, disconnect/reconnect, form c
   // --- the hub drops: red at once, with an event ---
   await stopProcess(hub);
 
-  const down = await waitForHubState(
+  const down = await waitForState(
     monitor,
     (state) => state.leg && !state.leg.connected && state.leg.status === "red",
     8000,
@@ -278,7 +321,7 @@ test("hub leg: env auto-connect, live stats, burst, disconnect/reconnect, form c
   const hubAgain = spawnHub(hubPort, { token: HUB_TOKEN });
   t.after(() => stopProcess(hubAgain));
 
-  const up = await waitForHubState(
+  const up = await waitForState(
     monitor,
     (state) =>
       state.leg &&
@@ -299,7 +342,7 @@ test("hub leg: env auto-connect, live stats, burst, disconnect/reconnect, form c
     nodeId: "site-renamed",
   });
 
-  const renamed = await waitForHubState(
+  const renamed = await waitForState(
     monitor,
     (state) =>
       state.config && state.config.nodeId === "site-renamed" && state.leg.connected,
@@ -316,6 +359,141 @@ test("hub leg: env auto-connect, live stats, burst, disconnect/reconnect, form c
   assert.match(monitorJs, /storageKeys/, "storage key comes from shared.js");
   assert.match(monitorJs, /autoConfig/, "auto-start uses the loaded config");
   assert.match(monitorJs, /state\.env/, "env prefill is wired");
+});
+
+// ------------------------------------------------------------
+// Local leg end to end (issue #5): the phone demo as a test — no
+// hub configured at all. A fake performer page joins, is probed
+// automatically (baseline + the alternating burst), goes green, drops
+// to Red the moment its socket dies, and recovers through the claim
+// token.
+// ------------------------------------------------------------
+
+test("local leg: join → auto-probed → green → disconnect red → token reconnect", async (t) => {
+  await assertPortsFree([6868, 6869]);
+
+  const server = spawn(process.execPath, ["server.js"], {
+    cwd: PROJECT_ROOT,
+    stdio: "ignore",
+  });
+  t.after(async () => stopProcess(server));
+
+  await waitForHealthReady();
+
+  const monitor = await connectMonitor();
+  t.after(() => monitor.close());
+
+  // --- no hub: the hub leg is absent, the local panel is live ---
+  const idle = await waitForState(
+    monitor,
+    (state) => state.configured === false && state.leg === null && state.local,
+  );
+
+  assert.equal(idle.overall, null, "no flower verdict without a hub");
+  assert.equal(idle.local.status, null, "no performer yet → no local data");
+  assert.equal(idle.local.performers, 0);
+  assert.deepEqual(idle.local.clients, {});
+
+  // --- the phone joins: zero actions, measurement starts on its own ---
+  const performer = await connectPerformerAt(PERFORMER_URL);
+  t.after(() => performer.socket.close());
+
+  assert.equal(performer.joined.id, 1);
+  assert.equal(performer.joined.recovered, false);
+  assert.equal(typeof performer.joined.token, "string");
+
+  const joined = await waitForState(
+    monitor,
+    (state) => state.local.clients["1"] && state.local.clients["1"].connected,
+  );
+
+  assert.equal(joined.local.performers, 1);
+  assert.equal(joined.local.status, "gray", "warming up first");
+  assert.ok(
+    joined.local.clients["1"].events.some((event) => event.type === "connected"),
+    "the join is in the event log",
+  );
+
+  // --- live numbers appear (auto-probed, baseline + burst) ---
+  const measured = await waitForState(
+    monitor,
+    (state) =>
+      state.local.clients["1"] &&
+      state.local.clients["1"].status === "green" &&
+      typeof state.local.clients["1"].metrics.rttP50 === "number" &&
+      state.local.status === "green" &&
+      typeof state.local.p50 === "number",
+    20000,
+  );
+
+  const metrics = measured.local.clients["1"].metrics;
+
+  assert.ok(metrics.rttP95 >= metrics.rttP50);
+  assert.ok(metrics.acks >= 30, `many probes answered: ${metrics.acks}`);
+
+  // --- the automatic phase cycle keeps alternating (LND parity) ---
+  await waitForState(monitor, (state) => state.local.probing === "burst");
+  await waitForState(monitor, (state) => state.local.probing === "calm");
+
+  // --- the phone drops (Wi-Fi off): Red at once, with an event ---
+  performer.socket.close();
+
+  const down = await waitForState(
+    monitor,
+    (state) =>
+      state.local.clients["1"] &&
+      !state.local.clients["1"].connected &&
+      state.local.clients["1"].status === "red",
+    8000,
+  );
+
+  assert.equal(down.local.status, "red", "the SITE summary includes the disconnected performer");
+  assert.equal(down.local.performers, 0);
+  assert.equal(down.local.clients["1"].reason, "Disconnected");
+  assert.equal(down.local.clients["1"].lastEvent.type, "disconnected");
+
+  // --- the phone comes back with its claim token: same id, recovery ---
+  // The registry freed the binding on the clean disconnect, so the
+  // rejoin is a fresh "accepted" — but the SMALLEST free id and the
+  // SAME token come back, and the session (which kept the card) logs
+  // it as a reconnect (LND's exact semantics).
+  const rejoined = await connectPerformerAt(PERFORMER_URL, performer.joined.token);
+  t.after(() => rejoined.socket.close());
+
+  assert.equal(rejoined.joined.id, 1, "the id is back (smallest free)");
+  assert.equal(rejoined.joined.token, performer.joined.token, "the claim token persists");
+
+  const recovered = await waitForState(
+    monitor,
+    (state) =>
+      state.local.clients["1"] &&
+      state.local.clients["1"].connected &&
+      state.local.clients["1"].events.some((event) => event.type === "reconnected"),
+    8000,
+  );
+
+  assert.equal(recovered.local.clients["1"].status, "gray", "back through warm-up");
+
+  await waitForState(
+    monitor,
+    (state) => state.local.status === "green",
+    20000,
+  );
+
+  // --- the two pages: the performer page carries the two-dot wiring,
+  // the monitor renders the local panel (source-level wiring) ---
+  const performerJs = await (await fetch(`${PERFORMER_URL}/performer.js`)).text();
+  assert.match(performerJs, /P\.events\.join/, "joins automatically");
+  assert.match(performerJs, /P\.events\.probe/, "answers probes");
+  assert.match(performerJs, /P\.events\.ack/, "acks with t0/t1");
+  assert.match(performerJs, /row-local/, "the local-leg dot");
+  assert.match(performerJs, /row-hub/, "the hub-leg dot");
+  assert.doesNotMatch(performerJs, /peers/, "no cross-site details on the performer page");
+
+  const monitorJs = await (await fetch(`${MONITOR_URL}/monitor.js`)).text();
+  assert.match(monitorJs, /renderLocal/, "the local panel renders");
+  assert.match(monitorJs, /localCopy/, "local-leg copy comes from shared.js");
+  assert.match(monitorJs, /P\.events\.state/, "renders the state broadcast");
 });
 
 // ------------------------------------------------------------
@@ -423,7 +601,7 @@ test("flower view: two instances see each other, overall follows the worst node"
   t.after(() => monitorB.close());
 
   // --- both monitors see BOTH nodes, overall green ---
-  const green = waitForHubState(
+  const green = waitForState(
     monitorA,
     (state) =>
       state.leg &&
@@ -433,7 +611,7 @@ test("flower view: two instances see each other, overall follows the worst node"
       state.overall.status === "green",
     25000,
   );
-  const greenB = waitForHubState(
+  const greenB = waitForState(
     monitorB,
     (state) =>
       state.leg &&
@@ -450,14 +628,82 @@ test("flower view: two instances see each other, overall follows the worst node"
   // site-pair sums them in the page).
   assert.equal(typeof stateA.leg.peers["site-b"].summary.rttP50, "number");
   assert.equal(typeof stateB.leg.peers["site-a"].summary.rttP50, "number");
-  assert.equal(stateA.leg.peers["site-b"].performerCount, 0, "no performer data until #5");
-  assert.equal(stateA.leg.peers["site-b"].localWorst, null, "no local data until #5");
+  assert.equal(stateA.leg.peers["site-b"].local.performers, 0, "no performers yet");
+  assert.equal(stateA.leg.peers["site-b"].local.status, null, "no local data until a performer joins");
+  assert.equal(stateA.local.status, null, "own site: no performer either");
   assert.equal(stateA.overall.attributionNodeId, stateA.config.nodeId);
+  assert.equal(stateA.overall.attributionLeg, "hub");
+
+  // --- #5 in the flower: a performer joins site B — A sees B's local
+  // leg arrive (ring, card, and the derived performer-pair inputs) ---
+  const performerB = await connectPerformerAt(`http://127.0.0.1:${SITE_B_PERFORMER}`);
+  t.after(() => performerB.socket.close());
+
+  const withLocal = await waitForState(
+    monitorA,
+    (state) =>
+      state.leg &&
+      state.leg.peers["site-b"] &&
+      state.leg.peers["site-b"].local &&
+      state.leg.peers["site-b"].local.status === "green" &&
+      typeof state.leg.peers["site-b"].local.p50 === "number" &&
+      state.leg.peers["site-b"].local.performers === 1 &&
+      state.overall &&
+      state.overall.status === "green",
+    25000,
+  );
+
+  assert.equal(withLocal.overall.attributionLeg, "hub", "a green local leg changes nothing");
+  assert.equal(withLocal.local.status, null, "A itself still has no performer");
+
+  // --- the performer's Wi-Fi drops: B's local leg goes Red, and A's
+  // overall banner attributes B's LOCAL leg (the demo line: “对站
+  // monitor 看到是 B 站本地腿的问题”) ---
+  performerB.socket.close();
+
+  const localDown = await waitForState(
+    monitorA,
+    (state) =>
+      state.leg &&
+      state.leg.peers["site-b"] &&
+      state.leg.peers["site-b"].connected &&
+      state.leg.peers["site-b"].local &&
+      state.leg.peers["site-b"].local.status === "red" &&
+      state.overall &&
+      state.overall.status === "red" &&
+      state.overall.attributionNodeId === "site-b" &&
+      state.overall.attributionLeg === "local",
+    25000,
+  );
+
+  assert.equal(localDown.overall.attributionSelf, false);
+
+  // --- the performer rejoins with its token: B's local leg recovers
+  // and the network returns to green ---
+  const performerBack = await connectPerformerAt(
+    `http://127.0.0.1:${SITE_B_PERFORMER}`,
+    performerB.joined.token,
+  );
+  t.after(() => performerBack.socket.close());
+
+  assert.equal(performerBack.joined.id, performerB.joined.id, "the id is back");
+
+  await waitForState(
+    monitorA,
+    (state) =>
+      state.leg &&
+      state.leg.peers["site-b"] &&
+      state.leg.peers["site-b"].local &&
+      state.leg.peers["site-b"].local.status === "green" &&
+      state.overall &&
+      state.overall.status === "green",
+    25000,
+  );
 
   // --- one side drops: the other side's overall turns red, attributed ---
   await stopProcess(serverB);
 
-  const down = await waitForHubState(
+  const down = await waitForState(
     monitorA,
     (state) =>
       state.leg &&
@@ -474,7 +720,7 @@ test("flower view: two instances see each other, overall follows the worst node"
   // --- it comes back: the network returns to green ---
   serverB = spawnServer(siteBDir, { nodeId: "site-b", hubPort });
 
-  await waitForHubState(
+  await waitForState(
     monitorA,
     (state) =>
       state.leg &&

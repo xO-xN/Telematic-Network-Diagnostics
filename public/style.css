@@ -319,6 +319,37 @@ header .sub {
   font-variant-numeric: tabular-nums;
 }
 
+.client-card .events-line {
+  border-top: 1px solid var(--track);
+  margin-top: 4px;
+  padding-top: 5px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* ------------------------------------------------------------
+ * Local panel (monitor, issue #5): this site's performers
+ * ------------------------------------------------------------ */
+
+.panel.wide {
+  width: min(960px, 100%);
+}
+
+.panel h3 .count {
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.local-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.local-cards .client-card {
+  width: 225px;
+}
+
 /* ------------------------------------------------------------
  * Panels: form + star + event log (monitor)
  * ------------------------------------------------------------ */
@@ -465,7 +496,7 @@ header .sub {
 }
 
 /* ------------------------------------------------------------
- * Performer page (placeholder)
+ * Performer page (issue #5): LND-minimal, two site-level dots
  * ------------------------------------------------------------ */
 
 .perf {
@@ -485,6 +516,32 @@ header .sub {
 .perf h2 {
   font-size: 16px;
   margin: 0;
+}
+
+.perf .dot-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 300px;
+  font-size: 13px;
+}
+
+.perf .dot-row .dot {
+  width: 14px;
+  height: 14px;
+  background: var(--st);
+  flex: none;
+}
+
+.perf .dot-row .dot-k {
+  color: var(--muted);
+}
+
+.perf .dot-row .dot-word {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--st);
 }
 
 .perf .status {

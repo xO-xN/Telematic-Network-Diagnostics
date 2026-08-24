@@ -450,8 +450,7 @@ function statsBodyFrom(from, overrides = {}) {
     status: "green",
     reason: "Link quality good",
     summary: { rttP50: 41, rttP95: 55, samples: 20 },
-    performerCount: 3,
-    localWorst: null,
+    local: { status: "green", p50: 3.5, performers: 3 },
     ...overrides,
   };
 }
@@ -494,8 +493,7 @@ test("HubLeg: announces own stats into the room while connected", async (t) => {
   assert.equal(body.connected, true);
   assert.equal(typeof body.status, "string");
   assert.equal(typeof body.summary.rttP50, "number");
-  assert.equal(body.performerCount, 0, "no performer data until #5");
-  assert.equal(body.localWorst, null, "no local data until #5");
+  assert.deepEqual(body.local, null, "no local-leg data until #5 wires it");
 
   // The warm-up announces (null numbers) are also legitimate bodies.
   const first = socket.sent.find(isAnnounce)[1];
@@ -504,12 +502,11 @@ test("HubLeg: announces own stats into the room while connected", async (t) => {
   assert.ok(first.summary, "warm-up announce still carries a summary");
 });
 
-test("HubLeg: site-level fields come from the injected getters (#5's plug points)", async (t) => {
+test("HubLeg: the local-leg summary comes from the injected getter (#5's plug point)", async (t) => {
   const socket = new FakeSocket({ echoLatencyMs: 0 });
   const leg = makeLeg(socket, {
     announceIntervalMs: 5,
-    performerCount: () => 4,
-    localWorst: () => "yellow",
+    localSummary: () => ({ status: "yellow", p50: 8.5, performers: 4 }),
   });
 
   t.after(() => leg.stop());
@@ -525,8 +522,18 @@ test("HubLeg: site-level fields come from the injected getters (#5's plug points
 
   const announce = socket.sent.find(([event]) => event === "relay");
 
-  assert.equal(announce[1].performerCount, 4);
-  assert.equal(announce[1].localWorst, "yellow");
+  assert.deepEqual(announce[1].local, {
+    status: "yellow",
+    p50: 8.5,
+    performers: 4,
+  });
+
+  // The own snapshot carries the same values (read live, not frozen).
+  assert.deepEqual(leg.snapshot().local, {
+    status: "yellow",
+    p50: 8.5,
+    performers: 4,
+  });
 });
 
 test("HubLeg: relayed peer stats land in the roster; foreign types ignored", (t) => {
@@ -541,6 +548,9 @@ test("HubLeg: relayed peer stats land in the roster; foreign types ignored", (t)
   socket.deliver("relay", statsBodyFrom("site-b", { status: "yellow", reason: "Jitter (IQR) 15.0 ms ≥ 10 ms" }));
   socket.deliver("relay", { type: "something-else", from: "site-x" });
   socket.deliver("relay", { type: "tnd-stats" }); // no from — dropped
+  // A malformed local summary is foreign input: normalized to "no
+  // data", never trusted shape-first.
+  socket.deliver("relay", statsBodyFrom("site-c", { local: { status: 42 } }));
 
   const snapshot = leg.snapshot();
 
@@ -548,8 +558,17 @@ test("HubLeg: relayed peer stats land in the roster; foreign types ignored", (t)
   assert.equal(snapshot.peers["site-b"].status, "yellow");
   assert.equal(snapshot.peers["site-b"].reason, "Jitter (IQR) 15.0 ms ≥ 10 ms");
   assert.equal(snapshot.peers["site-b"].summary.rttP50, 41);
-  assert.equal(snapshot.peers["site-b"].performerCount, 3);
+  assert.deepEqual(snapshot.peers["site-b"].local, {
+    status: "green",
+    p50: 3.5,
+    performers: 3,
+  });
   assert.equal(snapshot.peers["site-b"].connected, true);
+  assert.deepEqual(snapshot.peers["site-c"].local, {
+    status: null,
+    p50: null,
+    performers: 0,
+  });
   assert.equal(snapshot.peers["site-x"], undefined, "foreign relay types are ignored");
 
   leg.stop();

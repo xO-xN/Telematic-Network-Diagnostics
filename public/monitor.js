@@ -1,22 +1,26 @@
-// Telematic Network Diagnostics — monitor page (issues #3–#4).
+// Telematic Network Diagnostics — monitor page (issues #3–#5).
 //
 // The flower view: the WHOLE network's picture, identical on every
 // site's monitor (each node self-reports over the hub room relay).
 // Layout in the Local Network Diagnostics visual language:
 //
-//   overall banner  — worst hub leg (and, from #5, worst local leg)
-//                     across all nodes → green/yellow/red "suitable
-//                     for performance" verdict + plain attribution
+//   overall banner  — worst leg across all nodes, hub AND local →
+//                     green/yellow/red "suitable for performance"
+//                     verdict + plain attribution ("问题在 B 站本地腿")
 //   star diagram    — hub centered, nodes ringed; spokes carry each
 //                     node's self-reported RTT p50 (number only) and
-//                     quality color; outer rings carry the local-leg
-//                     status (gray until #5); own node marked 本站;
-//                     offline spokes dashed. Pure inline SVG.
+//                     quality color; outer rings carry the site's
+//                     local-leg worst; own node marked 本站; offline
+//                     spokes dashed. Pure inline SVG.
+//   local panel     — THIS site's performers: per-performer status,
+//                     metrics and event log (the local legs, #5)
 //   node cards      — per node: quality + reason, hub-leg p50/p95,
 //                     performer count, and the DERIVED end-to-end
-//                     numbers (site pair = two hub legs; big number,
+//                     numbers (site pair = two hub legs; performer
+//                     pair = local + hub + hub + local; big number,
 //                     small composition formula)
-//   form + log + QR — the #3 connect form, event log, performer QR
+//   form + log + QR — the #3 connect form, hub-leg event log,
+//                     performer QR
 //
 // RTT numbers are never colored anywhere — only quality is.
 
@@ -60,9 +64,13 @@ app.innerHTML =
   '<div class="hint">辐条 = hub 腿（标注 RTT p50，颜色 = 质量）· 外环 = 本地腿（灰 = 无数据）</div>' +
   "</div>" +
   "</div>" +
+  '<div class="panel wide" id="local-panel">' +
+  "<h3>本地腿 · Local leg — 本站演奏者 <span class=\"count\" id=\"local-count\"></span></h3>" +
+  '<div class="local-cards" id="local-cards"></div>' +
+  "</div>" +
   '<div id="cards"></div>' +
   '<div class="panel" id="log-panel">' +
-  "<h3>事件 · Events</h3>" +
+  "<h3>公网腿事件 · Hub-leg events</h3>" +
   '<div class="log" id="log"></div>' +
   "</div>" +
   '<div class="qr-row">' +
@@ -74,6 +82,8 @@ const bannerEl = document.getElementById("banner");
 const bannerCopyEl = document.getElementById("banner-copy");
 const bannerAttributionEl = document.getElementById("banner-attribution");
 const starEl = document.getElementById("star");
+const localCardsEl = document.getElementById("local-cards");
+const localCountEl = document.getElementById("local-count");
 const cardsEl = document.getElementById("cards");
 const urlInput = document.getElementById("f-url");
 const tokenInput = document.getElementById("f-token");
@@ -93,7 +103,7 @@ const socket = io("http://" + location.hostname + ":" + P.performerPort, {
   reconnection: true,
 });
 
-socket.on(P.events.hubState, (data) => {
+socket.on(P.events.state, (data) => {
   state = data;
   render();
 });
@@ -184,19 +194,15 @@ function submitConfig(save) {
 // Rendering
 // ------------------------------------------------------------
 
-const STATUS_CLASSES = ["st-idle", "st-gray", "st-green", "st-yellow", "st-red"];
-
-function statusClass(status) {
-  return "st-" + (status || "idle");
-}
-
-function setStatus(element, status) {
-  element.classList.remove(...STATUS_CLASSES);
-  element.classList.add(statusClass(status));
-}
+const statusClass = P.statusClass;
+const setStatus = P.setStatus;
 
 function leg() {
   return state && state.leg ? state.leg : null;
+}
+
+function localState() {
+  return state && state.local ? state.local : null;
 }
 
 function ownName() {
@@ -210,9 +216,15 @@ function sortedPeers(info) {
 }
 
 function render() {
-  prefillForm(); // first render only (guard inside)
+  // The env prefill rides the state broadcast: the initial render at
+  // load runs BEFORE the first state arrives (state is null there)
+  // and must not spend prefillForm's once-guard on an empty env.
+  if (state) {
+    prefillForm(); // first state-bearing render only (guard inside)
+  }
   renderBanner();
   renderStar();
+  renderLocal();
   renderCards();
   renderLog();
 }
@@ -224,8 +236,9 @@ function renderBanner() {
   setStatus(bannerEl, status);
   bannerCopyEl.textContent = P.overallCopy[status] || "";
 
-  // Plain attribution copy: which site's public (hub) leg is the
-  // problem. Yellow softens the wording; red blames outright.
+  // Plain attribution copy: which site's which leg is the problem —
+  // 公网腿 (hub) or 本地腿 (local). Yellow softens the wording; red
+  // blames outright.
   bannerAttributionEl.textContent = "";
 
   if (
@@ -233,12 +246,16 @@ function renderBanner() {
     overall.attributionNodeId &&
     (status === "red" || status === "yellow")
   ) {
+    const legWord = overall.attributionLeg === "local" ? "本地腿" : "公网腿";
     const where = overall.attributionSelf
-      ? "本站公网腿"
-      : overall.attributionNodeId + " 公网腿";
+      ? "本站" + legWord
+      : overall.attributionNodeId + " " + legWord;
     const verb = status === "red" ? "问题在" : "临界：";
+    // A space before a latin node name (Chinese-latin typography),
+    // none before 本站.
+    const gap = overall.attributionSelf ? "" : " ";
 
-    bannerAttributionEl.textContent = verb + where;
+    bannerAttributionEl.textContent = verb + gap + where;
   }
 }
 
@@ -261,7 +278,9 @@ function renderStar() {
       status: info.status,
       connected: info.connected,
       p50: info.summary ? info.summary.rttP50 : null,
-      localWorst: null, // #5 reports the own local leg's worst status
+      // The own site's local-leg worst (null = no performer yet → the
+      // outer ring stays gray).
+      localWorst: localState() ? localState().status : null,
     },
   ];
 
@@ -272,7 +291,7 @@ function renderStar() {
       status: peer.status, // snapshot already coerced offline → red
       connected: peer.connected,
       p50: peer.summary ? peer.summary.rttP50 : null,
-      localWorst: peer.localWorst || null,
+      localWorst: peer.local ? peer.local.status : null,
     });
   }
 
@@ -325,7 +344,7 @@ function renderStar() {
     label.setAttribute("text-anchor", "middle");
     svg.append(label);
 
-    // Node: outer ring = local-leg worst (gray until #5 reports it),
+    // Node: outer ring = the site's local-leg worst (gray = no data),
     // inner dot = hub-leg quality.
     const ring = svgEl("circle", { cx: x, cy: y, r: 17 });
     ring.setAttribute("class", "node-ring " + statusClass(node.localWorst || "gray"));
@@ -369,6 +388,8 @@ function renderCards() {
 function renderOwnCard(name, info) {
   const card = el("div", "client-card " + statusClass(info.status));
   const head = el("div", "head");
+  const local = localState();
+  const localStatus = local ? local.status : null;
 
   head.append(
     el("span", "dot on"),
@@ -391,7 +412,8 @@ function renderOwnCard(name, info) {
     metricRow("One-way ≈ RTT/2 单程估计", formatMs(summary.oneWayEstimateMs, 1)),
     metricRow("Jitter (IQR) 抖动", formatMs(summary.iqrMs, 1)),
     metricRow("Loss 丢包", formatPct(summary.lossRate)),
-    metricRow("Performers 演奏者", String(info.performerCount ?? 0)),
+    metricRow("Performers 演奏者", String(local ? local.performers : 0)),
+    metricRow("Local leg 本地腿", localStatus || "无数据 · n/a"),
   );
   card.append(rows);
 
@@ -449,15 +471,15 @@ function renderPeerCard(nodeId, peer, own) {
 
   card.append(siteBlock);
 
-  // Performer pair = local + hub + hub + local — four segments. The
-  // formula lights up when #5 starts reporting local legs; until then
-  // the placeholder names exactly what is missing.
-  const perfTotal = P.derivedPerformerPair(
-    null, // own local-leg p50 — measured from #5 on
-    ownP50,
-    peerP50,
-    null, // peer local-leg p50 — relayed from #5 on
-  );
+  // Performer pair = local + hub + hub + local — four segments, both
+  // local p50s being the sites' worst-online-performer medians. Null
+  // while any segment is unmeasured; a disconnected peer shows "—"
+  // (same rule as the site pair).
+  const ownLocalP50 = localState() ? localState().p50 : null;
+  const peerLocalP50 = peer.local ? peer.local.p50 : null;
+  const perfTotal = peer.connected
+    ? P.derivedPerformerPair(ownLocalP50, ownP50, peerP50, peerLocalP50)
+    : null;
 
   const perfBlock = el("div", "derived");
 
@@ -466,12 +488,17 @@ function renderPeerCard(nodeId, peer, own) {
   if (perfTotal !== null) {
     perfBlock.append(
       el("div", "big", "≈ " + Math.round(perfTotal) + " ms"),
-      el("div", "formula", "本地 + hub + hub + 本地"),
+      el(
+        "div",
+        "formula",
+        "本地 " + Math.round(ownLocalP50) + " + hub " + Math.round(ownP50) +
+          " + hub " + Math.round(peerP50) + " + 本地 " + Math.round(peerLocalP50) + " ms",
+      ),
     );
   } else {
     perfBlock.append(
       el("div", "big", "—"),
-      el("div", "formula", "等待本地腿测量（#5）"),
+      el("div", "formula", peer.connected ? "等待本地腿测量 · waiting for local legs" : "对端不可达"),
     );
   }
 
@@ -482,10 +509,90 @@ function renderPeerCard(nodeId, peer, own) {
   rows.append(
     metricRow("RTT p50 典型往返", formatMs(summary.rttP50)),
     metricRow("RTT p95 尾部往返", formatMs(summary.rttP95)),
-    metricRow("Performers 演奏者", String(peer.performerCount ?? 0)),
-    metricRow("Local leg 本地腿", peer.localWorst || "无数据 · n/a"),
+    metricRow("Performers 演奏者", String(peer.local ? peer.local.performers : 0)),
+    metricRow("Local leg 本地腿", (peer.local && peer.local.status) || "无数据 · n/a"),
   );
   card.append(rows);
+
+  return card;
+}
+
+// The local panel: THIS site's performers, one compact card each —
+// status (LND rules: latency participates on a LAN), metrics, and the
+// per-performer event log (connected / disconnected / reconnected).
+function renderLocal() {
+  localCardsEl.textContent = "";
+
+  const local = localState();
+
+  if (!local) {
+    return;
+  }
+
+  const entries = Object.entries(local.clients || {}).sort(
+    ([a], [b]) => Number(a) - Number(b),
+  );
+
+  localCountEl.textContent =
+    entries.length > 0 ? "· " + local.performers + " online" : "";
+
+  if (entries.length === 0) {
+    localCardsEl.append(
+      el(
+        "div",
+        "hint",
+        "暂无演奏者 — 扫下方二维码，手机连上即自动开始测量 · No performers yet — scan the QR below",
+      ),
+    );
+    return;
+  }
+
+  for (const [id, client] of entries) {
+    localCardsEl.append(renderPerformerCard(local.probing, id, client));
+  }
+}
+
+function renderPerformerCard(probing, id, client) {
+  const card = el("div", "client-card " + statusClass(client.status));
+  const head = el("div", "head");
+
+  head.append(
+    el("span", "dot on"),
+    el("span", null, "演奏者 " + id + (probing === "burst" ? " · burst" : "")),
+    el("span", "status-word", client.status.toUpperCase()),
+  );
+  card.append(
+    head,
+    el("div", "copy", P.localCopy[client.status] || ""),
+    el("div", "reason", client.connected ? client.reason || "" : "Disconnected"),
+  );
+
+  const metrics = client.metrics || {};
+  const rows = el("div");
+
+  rows.append(
+    metricRow("RTT p50 典型往返", formatMs(metrics.rttP50)),
+    metricRow("RTT p95 尾部往返", formatMs(metrics.rttP95)),
+    metricRow("Jitter p95 抖动", formatMs(metrics.jitterP95)),
+    metricRow("Loss 丢包", formatPct(metrics.lossRate)),
+  );
+  card.append(rows);
+
+  // Last three events: the full connected → disconnected → reconnected
+  // story fits on one compact line.
+  const recent = (client.events || []).slice(-3).reverse();
+
+  if (recent.length > 0) {
+    card.append(
+      el(
+        "div",
+        "events-line",
+        recent
+          .map((event) => eventLabel(event.type) + " " + agoText(event.agoMs))
+          .join(" · "),
+      ),
+    );
+  }
 
   return card;
 }

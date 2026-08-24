@@ -44,6 +44,26 @@
       red: "Hub link poor or unreachable",
     },
 
+    // Local-leg status copy (performer ↔ this score server, LND
+    // vocabulary). The local thresholds DO color on latency — a LAN
+    // RTT that high is a real problem, unlike the hub leg.
+    localCopy: {
+      gray: "Warming up… · 预热中",
+      green: "Local network good · 本地网络良好",
+      yellow: "Caution — borderline local network · 本地网络临界",
+      red: "Local network poor or performer offline · 本地网络差或演奏者掉线",
+    },
+
+    // Performer roster cap (id space, PlayerRegistry) and the
+    // per-performer event vocabulary (lib/local-leg.js producer,
+    // monitor page consumer).
+    maxClients: 16,
+    localEvents: {
+      connected: "connected",
+      disconnected: "disconnected",
+      reconnected: "reconnected",
+    },
+
     // Derived end-to-end numbers (parent #1): the star topology has no
     // direct site-to-site link, so these are SUMS of measured segments —
     // never a third measurement layer. Null while any segment is
@@ -82,19 +102,52 @@
       red: "Not suitable for performance · 不适宜演出",
     },
 
-    // localStorage keys for the monitor's connection form (issue #3:
-    // the form persists, reopening the monitor must not re-fill it).
+    // Status → CSS class helpers, shared by both pages (the st-*
+    // classes set the --st color variable in style.css). Written
+    // this-free so a destructured `const setStatus = P.setStatus` keeps
+    // working. In Node these exist unused — shared.js is the
+    // browser/server seam, not a browser-only file.
+    STATUS_CLASSES: ["st-idle", "st-gray", "st-green", "st-yellow", "st-red"],
+
+    statusClass: function (status) {
+      return "st-" + (status || "idle");
+    },
+
+    setStatus: function (element, status) {
+      var classes = ["st-idle", "st-gray", "st-green", "st-yellow", "st-red"];
+      for (var i = 0; i < classes.length; i++) {
+        element.classList.remove(classes[i]);
+      }
+      element.classList.add("st-" + (status || "idle"));
+    },
+
+    // localStorage keys: the monitor's connection form (issue #3: the
+    // form persists, reopening the monitor must not re-fill it) and the
+    // performer page's claim token (a reconnect recovers the client
+    // id).
     storageKeys: {
       hubConfig: "tnd-hub-config",
+      performerToken: "tnd-performer-token",
     },
 
     events: {
-      // Browser → score server:
+      // Performer page ↔ score server (issue #5, the local leg):
+      //   join:     page → server { token } — allocate or recover an id
+      //   joined:   server → page { id, token, recovered }
+      //   rejected: server → page { reason }
+      //   probe:    server → page { seq } — answer immediately
+      //   ack:      page → server { seq, t0, t1 } (RTT measured server-side)
+      join: "join",
+      joined: "joined",
+      rejected: "rejected",
+      probe: "local:probe",
+      ack: "local:ack",
+      // Monitor page ↔ score server:
       //   config: submit the connection form { url, token, room, nodeId }
-      // Score server → browser:
-      //   state:  the full hub-leg snapshot (token never echoed back)
+      //   state:  the full site snapshot — hub leg + peers + local
+      //           legs + overall (token never echoed back)
       hubConfig: "hub:config",
-      hubState: "hub:state",
+      state: "state",
     },
   };
 });

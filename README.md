@@ -17,7 +17,8 @@ It measures two legs (issue #1, v0.1.0 under construction):
   Latency is reported as a number only; quality (jitter, loss,
   reconnects) is what colors the status.
 - **Local leg** — performer ↔ their site's score server over local
-  Wi-Fi (the Local Network Diagnostics logic).
+  Wi-Fi (the Local Network Diagnostics logic). On a LAN, latency
+  participates in the coloring — a slow reply there is a real problem.
 
 The tool ships with its own relay: [`hub/hub.js`](hub/hub.js) — a
 Socket.IO hub (token auth, rooms, hub receive timestamps) deployed from
@@ -36,9 +37,20 @@ calm at 1 Hz, no buttons). Every node relays its rolling stats
 through the hub room, so each site's monitor shows the same picture:
 an overall "suitable for performance" banner with fault attribution,
 an inline-SVG star diagram (spokes = hub legs with RTT p50 labels and
-quality colors, dashed when offline; outer rings = local legs, gray
-until #5), per-node cards with derived site-pair end-to-end numbers
-(big number + composition formula). The local leg lands with #5.
+quality colors, dashed when offline; outer rings = local legs), and
+per-node cards with derived end-to-end numbers (site pair = two hub
+legs; performer pair = local + hub + hub + local; big number +
+composition formula).
+
+The local leg landed with issue #5 (LND port): performers join from
+their phones (scan the QR on the monitor — zero controls, the claim
+token survives reconnects) and are probed automatically with the same
+phase cycle. Per-performer cards with status, metrics and event log
+sit in the monitor's local panel; a dropped performer is Red at once,
+and the site's worst local status flows to every monitor through the
+flower view — the banner then reads "问题在 X 站本地腿". The performer
+page shows exactly two dots (this site's local leg, this site's hub
+leg) and no cross-site details.
 
 ### Quick start
 
@@ -79,9 +91,11 @@ auto-starts measuring — zero buttons.
 ```
 hub/      The relay: hub.js + tnd-hub.service (systemd unit)
 lib/      Reusable core (config / network / health / lifecycle /
-          qr / theme-follow)
+          qr / theme-follow / status / hub-leg / local-leg + players /
+          flower)
 public/   Browser side (performer + monitor pages)
-test/     node --test (config / integration / hub / theme-follow)
+test/     node --test (config / integration / hub / hub-leg /
+          local-leg / players / flower / pages / theme-follow)
 docs/     Hub deployment guide
 ```
 
@@ -102,7 +116,8 @@ conductor 的 go/no-go 问题——此刻整个网络适合演奏吗？如果不
 - **hub 腿**——score server ↔ 公网 hub，持续测量。延迟只标数字；抖动、
   丢包、重连这类质量指标才决定状态颜色。
 - **本地腿**——performer ↔ 本站 score server 的局域网 Wi-Fi（Local
-  Network Diagnostics 逻辑移植）。
+  Network Diagnostics 逻辑移植）。局域网内延迟参与染色——那里慢就是
+  真问题。
 
 工程自带中继：[`hub/hub.js`](hub/hub.js)——Socket.IO hub（token 鉴权、
 房间、hub 接收时间戳），从源码部署在公网 VPS 上。无音频、无
@@ -117,9 +132,16 @@ monitor 连接表单（issue #3）与花视图（issue #4）已落地：score se
 30 msg/s 突发 ↔ 2 秒 1 Hz 平静自动交替，无任何按钮）。各节点把滚动统
 计经 hub 房间中继互达，每个站点的 monitor 看到同一份画面：全网
 "适宜演奏"横幅（取最差 + 故障归属定位）、内联 SVG 星型图（辐条 = hub
-腿，标注 RTT p50、质量色，断线虚线；外环 = 本地腿，#5 前为灰）、每节
-点卡片与推导站点对端到端数字（大数字 + 小字构成式）。本地腿随 #5 落
-地。
+腿，标注 RTT p50、质量色，断线虚线；外环 = 本地腿）、每节点卡片与推
+导端到端数字（站点对 = 两条 hub 腿；演奏者对 = 本地 + hub + hub +
+本地；大数字 + 小字构成式）。
+
+本地腿随 issue #5 落地（LND 移植）：演奏者手机扫码即加入（零操作，
+claim token 保证重连找回身份），自动接受基线 + 突发探测。monitor 的本
+地腿面板逐个显示演奏者状态、指标与事件日志；演奏者掉线立即变红，站
+点最差本地状态经花视图流到每个 monitor——横幅会写"问题在 X 站本地
+腿"。演奏者页只有两个状态点（本站本地腿、本站 hub 腿），没有任何跨
+站细节。
 
 ### 快速开始
 
@@ -158,9 +180,11 @@ token / room / 节点名）持久化在浏览器 localStorage 并以 env 预填�
 ```
 hub/      中继：hub.js + tnd-hub.service（systemd unit）
 lib/      可复用核心（config / network / health / lifecycle /
-          qr / theme-follow）
+          qr / theme-follow / status / hub-leg / local-leg + players /
+          flower）
 public/   浏览器端（performer + monitor 页面）
-test/     node --test（config / integration / hub / theme-follow）
+test/     node --test（config / integration / hub / hub-leg /
+          local-leg / players / flower / pages / theme-follow）
 docs/     hub 部署指南
 ```
 

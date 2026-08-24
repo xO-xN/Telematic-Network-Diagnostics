@@ -10,6 +10,11 @@
 //   outbound socket.io-client connection with the LND-style automatic
 //   probe cycle (2 s burst @ 30 msg/s ↔ 2 s calm @ 1 Hz), live stats
 //   broadcasts to the monitor page
+// - measures the local legs (performers ↔ this server, lib/local-leg.js
+//   + lib/players.js, issue #5): performers join with a claim token
+//   and are probed automatically — same phase cycle, LND thresholds,
+//   disconnect → Red at once; the site's worst local status flows into
+//   the hub room announce and the flower view
 // - shuts down cleanly on SIGINT / SIGTERM
 //
 // Hub connection, two channels (issue #3, the Phase 0 validation
@@ -38,6 +43,16 @@ const { HealthTracker } = require("./lib/health");
 const { qrHandler } = require("./lib/qr");
 const { HubLeg } = require("./lib/hub-leg");
 const { overallFromNodes } = require("./lib/flower");
+const { PlayerRegistry } = require("./lib/players");
+const {
+  LocalSession,
+  PROBE_INTERVAL_MS,
+  BASELINE_TIMEOUT_MS,
+  BURST_INTERVAL_MS,
+  BURST_TIMEOUT_MS,
+  BURST_PHASE_MS,
+  CALM_PHASE_MS,
+} = require("./lib/local-leg");
 const {
   attachShutdown,
   closeHttpServer,
@@ -159,6 +174,151 @@ const io = require("socket.io")(server, {
 });
 
 // ------------------------------------------------------------
+// Local legs (issue #5): performers ↔ this server
+// ------------------------------------------------------------
+
+// The client registry: numeric ids, claim-token recovery, cap.
+const registry = new PlayerRegistry({
+  maxClients: shared.maxClients,
+});
+
+// The local-leg session (lib/local-leg.js): per-performer metrics and
+// status, LND rules verbatim. Always on — the probe loop below starts
+// at boot; a performer that joins is measured from its first second.
+const local = new LocalSession();
+
+// In-flight probes per performer id: id -> seq -> { sentAt, timer }.
+// The burst phase sends ~30 probes per second per performer, so
+// several can be in flight at once — hence the per-seq map.
+const pendings = new Map();
+const probeSeqs = new Map(); // per-performer probe sequence counters
+
+// The shared phase cycle (same shape as the hub leg's): 2 s burst
+// @ 30 msg/s ↔ 2 s calm @ 1 Hz, forever.
+let burstActive = false;
+let phaseTimer = null;
+let freezeTimer = null; // defers the burst-window freeze past the tail
+
+function sendLocalProbe(id, socket, timeoutMs) {
+  const seq = (probeSeqs.get(id) || 0) + 1;
+  const sentAt = Date.now();
+  const timer = setTimeout(() => {
+    if (removePending(id, seq)) {
+      local.recordTimeout(id);
+    }
+  }, timeoutMs);
+
+  probeSeqs.set(id, seq);
+
+  let bySeq = pendings.get(id);
+
+  if (!bySeq) {
+    bySeq = new Map();
+    pendings.set(id, bySeq);
+  }
+
+  bySeq.set(seq, { sentAt, timer });
+  socket.emit(EVENTS.probe, { seq });
+}
+
+// Removes one in-flight probe and prunes the per-performer map when it
+// empties. Returns true when the probe was actually pending.
+function removePending(id, seq) {
+  const bySeq = pendings.get(id);
+
+  if (!bySeq || !bySeq.has(seq)) {
+    return false;
+  }
+
+  clearTimeout(bySeq.get(seq).timer);
+  bySeq.delete(seq);
+
+  if (bySeq.size === 0) {
+    pendings.delete(id);
+  }
+
+  return true;
+}
+
+function clearPending(id) {
+  const bySeq = pendings.get(id);
+
+  if (bySeq) {
+    for (const pending of bySeq.values()) {
+      clearTimeout(pending.timer);
+    }
+
+    pendings.delete(id);
+  }
+}
+
+function clearAllPending() {
+  for (const id of [...pendings.keys()]) {
+    clearPending(id);
+  }
+}
+
+// One probe cycle per second: baseline probes only in the calm phase
+// (the burst timer covers the burst phase), then a status cycle. The
+// state broadcast runs on its own 1 Hz timer; join/disconnect
+// transitions broadcast immediately.
+function localTick() {
+  if (!burstActive) {
+    for (const assignment of registry.list()) {
+      const socket = io.sockets.sockets.get(assignment.socketId);
+
+      if (socket) {
+        sendLocalProbe(assignment.id, socket, BASELINE_TIMEOUT_MS);
+      }
+    }
+  }
+
+  local.cycleAll();
+}
+
+const localTimer = setInterval(localTick, PROBE_INTERVAL_MS);
+
+function burstTick() {
+  if (!burstActive) {
+    return;
+  }
+
+  for (const assignment of registry.list()) {
+    const socket = io.sockets.sockets.get(assignment.socketId);
+
+    if (socket) {
+      sendLocalProbe(assignment.id, socket, BURST_TIMEOUT_MS);
+    }
+  }
+}
+
+const localBurstTimer = setInterval(burstTick, BURST_INTERVAL_MS);
+
+// The always-on cycle starts in the burst phase (LND parity — same as
+// a hub-leg connection entering burst on connect).
+function enterBurstPhase() {
+  burstActive = true;
+  local.setPhase("burst");
+  local.beginBurstWindow();
+  phaseTimer = setTimeout(enterCalmPhase, BURST_PHASE_MS);
+}
+
+function enterCalmPhase() {
+  burstActive = false;
+  local.setPhase("calm");
+  // Freeze the window's timeout rate a burst-timeout after the last
+  // probe: probes sent in the window's tail time out up to 200 ms
+  // later and must still count towards this window, not the next one.
+  freezeTimer = setTimeout(() => {
+    local.endBurstWindow();
+    freezeTimer = null;
+  }, BURST_TIMEOUT_MS);
+  phaseTimer = setTimeout(enterBurstPhase, CALM_PHASE_MS);
+}
+
+enterBurstPhase();
+
+// ------------------------------------------------------------
 // Hub leg (issue #3)
 // ------------------------------------------------------------
 
@@ -221,9 +381,12 @@ function configureHubLeg({ url, token, room, nodeId }) {
       ...normalized,
       ioFactory: (hubUrl, opts) => ioClient(hubUrl, opts),
       events: hubEvents,
+      // The site's local-leg summary rides every announce (issue #5):
+      // live read, so the relayed values track the local session.
+      localSummary: () => local.siteSummary(),
       // State transitions (connect/disconnect/reconnect/burst) surface
       // immediately; the numbers refresh on the 1 Hz tick below.
-      onChange: broadcastHubState,
+      onChange: broadcastState,
     });
     hubLeg.start();
     console.log(
@@ -237,28 +400,36 @@ function configureHubLeg({ url, token, room, nodeId }) {
     });
   }
 
-  broadcastHubState();
+  broadcastState();
 }
 
-function hubStateSnapshot() {
+// The full site snapshot every page renders from: the hub leg (own +
+// relayed peers), the local legs (this site's performers), and the
+// flower view's overall — worst leg across every known node, hub AND
+// local, with fault attribution naming the offending site and leg.
+function stateSnapshot() {
   const leg = hubLeg ? hubLeg.snapshot() : null;
+  const localSnapshot = local.snapshot(Date.now());
 
-  // The flower view's overall: worst hub leg across every known node
-  // (own + peers), with fault attribution naming the offender. Local
-  // legs join the verdict when #5 starts reporting them.
   let overall = null;
 
   if (leg) {
     const nodes = [
       {
         nodeId: activeConfig ? activeConfig.nodeId : null,
-        status: leg.connected ? leg.status : "red",
+        hubStatus: leg.connected ? leg.status : "red",
+        localStatus: localSnapshot.status,
         isSelf: true,
       },
     ];
 
     for (const [nodeId, peer] of Object.entries(leg.peers || {})) {
-      nodes.push({ nodeId, status: peer.status, isSelf: false });
+      nodes.push({
+        nodeId,
+        hubStatus: peer.status,
+        localStatus: peer.local ? peer.local.status : null,
+        isSelf: false,
+      });
     }
 
     overall = overallFromNodes(nodes);
@@ -278,18 +449,20 @@ function hubStateSnapshot() {
     // for the form prefill (LAN trust model, same as the form itself).
     env: envHub,
     leg,
+    local: localSnapshot,
     overall,
   };
 }
 
-function broadcastHubState() {
-  io.emit(EVENTS.hubState, hubStateSnapshot());
+function broadcastState() {
+  io.emit(EVENTS.state, stateSnapshot());
 }
 
-// The monitor's numbers refresh at the baseline cadence; HubLeg's
-// onChange fires extra broadcasts on state transitions so a disconnect
-// or reconnect is reflected immediately, not on the next tick.
-const hubStateTimer = setInterval(broadcastHubState, 1000);
+// The pages' numbers refresh at the baseline cadence; HubLeg's
+// onChange and the local join/disconnect handlers fire extra
+// broadcasts on state transitions so a disconnect or reconnect is
+// reflected immediately, not on the next tick.
+const stateTimer = setInterval(broadcastState, 1000);
 
 // Env channel present at boot → auto-connect without opening the
 // monitor (the Phase 0 dual-channel: both channels feed one path).
@@ -303,14 +476,84 @@ if (envHub.hubUrl && envHub.hubToken) {
 }
 
 // ------------------------------------------------------------
-// Socket.IO protocol (monitor page)
+// Socket.IO protocol (performer pages + monitor pages)
 // ------------------------------------------------------------
 
 io.on("connection", (socket) => {
-  socket.emit(EVENTS.hubState, hubStateSnapshot());
+  socket.emit(EVENTS.state, stateSnapshot());
 
+  // The monitor's connection form.
   socket.on(EVENTS.hubConfig, (config) => {
     configureHubLeg(config || {});
+  });
+
+  // The performer page joins with its persisted claim token: a known
+  // token recovers the client id (reconnect), a fresh one allocates.
+  socket.on(EVENTS.join, (payload) => {
+    const result = registry.allocate({
+      socketId: socket.id,
+      claimToken: payload && payload.token,
+    });
+
+    if (result.status === "rejected") {
+      socket.emit(EVENTS.rejected, {
+        reason: result.message,
+      });
+      socket.disconnect(true);
+      return;
+    }
+
+    local.addClient(result.id, Date.now());
+    socket.emit(EVENTS.joined, {
+      id: result.id,
+      token: result.token,
+      recovered: result.status === "recovered",
+    });
+    broadcastState();
+  });
+
+  // The local-leg probe answer: matched by (performer, seq). A late
+  // ack for an already-timed-out probe carries a stale seq and is
+  // ignored; the timeout already counted. t0/t1 are the page's
+  // receive/reply timestamps (client processing time only — the RTT
+  // itself is measured server-side).
+  socket.on(EVENTS.ack, (payload) => {
+    const id = registry.findIdBySocket(socket.id);
+
+    if (id === null || !payload || typeof payload.seq !== "number") {
+      return;
+    }
+
+    const bySeq = pendings.get(id);
+    const pending = bySeq && bySeq.get(payload.seq);
+
+    if (!pending) {
+      return;
+    }
+
+    removePending(id, payload.seq);
+
+    const processingMs =
+      typeof payload.t1 === "number" && typeof payload.t0 === "number"
+        ? payload.t1 - payload.t0
+        : null;
+
+    local.recordAck(id, Date.now() - pending.sentAt, processingMs);
+  });
+
+  socket.on("disconnect", () => {
+    const released = registry.releaseBySocket(socket.id);
+
+    if (!released) {
+      return;
+    }
+
+    clearPending(released.id);
+
+    // The card stays, flips Red immediately and the disconnect is
+    // logged; a reconnect restores the identity via the claim token.
+    local.disconnectClient(released.id, Date.now());
+    broadcastState();
   });
 });
 
@@ -321,7 +564,12 @@ io.on("connection", (socket) => {
 attachShutdown({
   onShutdown: async () => {
     health.setStopping();
-    clearInterval(hubStateTimer);
+    clearInterval(stateTimer);
+    clearInterval(localTimer);
+    clearInterval(localBurstTimer);
+    clearTimeout(phaseTimer);
+    clearTimeout(freezeTimer);
+    clearAllPending();
 
     if (hubLeg) {
       hubLeg.stop();
