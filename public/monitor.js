@@ -121,10 +121,11 @@ function T() {
   return P.copy[L.current()] || P.copy["zh-CN"];
 }
 
-// {0}/{1} placeholder filling for reason templates and the like.
+// Placeholder filling for the copy templates: numeric slots ({0}, {1})
+// read the params array, named slots ({node}) read the params object.
 function fmt(template, params) {
-  return template.replace(/\{(\d+)\}/g, (whole, index) =>
-    params && params[index] !== undefined ? params[index] : whole,
+  return template.replace(/\{(\w+)\}/g, (whole, key) =>
+    params && params[key] !== undefined ? params[key] : whole,
   );
 }
 
@@ -276,6 +277,7 @@ function render() {
   chromeEls.formToken.textContent = m.formToken;
   chromeEls.formRoom.textContent = m.formRoom;
   chromeEls.formNode.textContent = m.formNode;
+  nodeInput.setAttribute("placeholder", m.formNodePlaceholder);
   connectButton.textContent = m.connect;
   chromeEls.formHint.textContent = m.formHint;
   chromeEls.starHint.textContent = m.starHint;
@@ -324,15 +326,15 @@ function renderBanner() {
     (status === "red" || status === "yellow")
   ) {
     const legWord = overall.attributionLeg === "local" ? "Local" : "Hub";
-    const verb = status.charAt(0).toUpperCase() + status.slice(1);
+    // The template keys carry the status capitalized ("Red" /
+    // "Yellow") and the self variant unprefixed.
+    const statusWord = status.charAt(0).toUpperCase() + status.slice(1);
     const key =
-      "attrib" + (overall.attributionSelf ? "Self" : "") + legWord + verb;
-    const template = t.monitor[key] || "";
+      "attrib" + (overall.attributionSelf ? "Self" : "") + legWord + statusWord;
 
-    bannerAttributionEl.textContent = template.replace(
-      /\{node\}/g,
-      overall.attributionNodeId,
-    );
+    bannerAttributionEl.textContent = fmt(t.monitor[key] || "", {
+      node: overall.attributionNodeId,
+    });
   }
 }
 
@@ -654,7 +656,8 @@ function renderPerformerCard(probing, id, client) {
     el(
       "span",
       null,
-      t.monitor.performer + id + (probing === "burst" ? " · " + t.monitor.burst : ""),
+      fmt(t.monitor.performer, [id]) +
+        (probing === "burst" ? " · " + t.monitor.burst : ""),
     ),
     el("span", "status-word", client.status.toUpperCase()),
   );
@@ -719,7 +722,7 @@ function renderLog() {
     entry.append(
       type,
       document.createTextNode(
-        (event.detail ? " — " + detailText(event.detail, t) : "") +
+        (event.detail ? " — " + detailText(event.detail) : "") +
           "  ·  " + agoText(event.agoMs),
       ),
     );
@@ -784,8 +787,8 @@ function eventLabel(type) {
 // Event details the server itself words carry a key mapped through
 // the table; external diagnostics (socket.io reasons, error messages)
 // stay verbatim.
-function detailText(detail, t) {
-  return t.eventDetails[detail] || detail;
+function detailText(detail) {
+  return T().eventDetails[detail] || detail;
 }
 
 function agoText(agoMs) {

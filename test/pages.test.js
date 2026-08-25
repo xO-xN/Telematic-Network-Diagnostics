@@ -429,6 +429,11 @@ test("monitor page: a language switch never clobbers the form inputs", () => {
   }
 
   assert.equal(page.document.getElementById("l-node").textContent, "Node name");
+  assert.equal(
+    page.document.getElementById("f-node").attributes.placeholder,
+    "site name",
+    "the node placeholder follows the locale too",
+  );
   assert.equal(page.document.getElementById("f-url").value, "http://env-hub");
   assert.equal(page.document.getElementById("f-node").value, "my editing");
   assert.equal(page.document.getElementById("l-url").textContent, "Hub URL");

@@ -112,6 +112,7 @@
           formToken: "Token",
           formRoom: "Room",
           formNode: "节点名",
+          formNodePlaceholder: "站点名",
           connect: "连接",
           formHint:
             "表单保存在浏览器 localStorage，重开无需重填；App 注入的 env（PNDS_HUB_URL 等）会作为预填默认值。",
@@ -128,7 +129,7 @@
           qrAlt: "演奏者页面二维码",
           selfTag: "本站",
           burst: "突发",
-          performer: "演奏者 ",
+          performer: "演奏者 {0}",
           ownFallback: "本站",
           rttP50: "RTT p50 典型往返",
           rttP95: "RTT p95 尾部往返",
@@ -219,6 +220,7 @@
           formToken: "Token",
           formRoom: "Room",
           formNode: "Node name",
+          formNodePlaceholder: "site name",
           connect: "Connect",
           formHint:
             "The form persists in the browser's localStorage — no re-typing on reopen; env injected by the App (PNDS_HUB_URL, …) prefills the defaults.",
@@ -237,7 +239,7 @@
           qrAlt: "QR code for the performer page",
           selfTag: "This site",
           burst: "burst",
-          performer: "Performer ",
+          performer: "Performer {0}",
           ownFallback: "This node",
           rttP50: "RTT p50 typical",
           rttP95: "RTT p95 tail",
