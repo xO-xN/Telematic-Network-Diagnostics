@@ -5,7 +5,7 @@
 // Single source of truth:
 //   Ports    → manifest.json (browser gets them via __config.js injected by the server)
 //   Events   → here (events)
-//   Copy     → here (statusCopy)
+//   Copy     → here (copy — bilingual, one table per locale)
 //   Storage  → here (storageKeys)
 
 (function (root, factory) {
@@ -33,25 +33,239 @@
     // the hub's own default).
     defaultRoom: "default",
 
-    // Hub-leg status copy, shared by the server (reasons in
-    // lib/hub-leg.js) and the monitor page. The RTT numbers are never
-    // colored — only quality is (parent issue #1).
-    statusCopy: {
-      idle: "Not connected — configure the hub",
-      gray: "Warming up",
-      green: "Hub link quality good",
-      yellow: "Caution — borderline hub link",
-      red: "Hub link poor or unreachable",
-    },
-
-    // Local-leg status copy (performer ↔ this score server, LND
-    // vocabulary). The local thresholds DO color on latency — a LAN
-    // RTT that high is a real problem, unlike the hub leg.
-    localCopy: {
-      gray: "Warming up… · 预热中",
-      green: "Local network good · 本地网络良好",
-      yellow: "Caution — borderline local network · 本地网络临界",
-      red: "Local network poor or performer offline · 本地网络差或演奏者掉线",
+    // UI copy, per locale (bilingual since v0.2.0). Keys are
+    // language-neutral; the monitor page renders through the table of
+    // the current locale (lib/locale-follow.js follows the App
+    // language, default "zh-CN" — this project's historical UI). The
+    // server's state carries only the reason KEYS (lib/hub-leg.js,
+    // lib/local-leg.js); reasonParams are preformatted values for the
+    // {0}/{1} placeholders. "zh-CN" doubles as the fallback table; a
+    // session with no locale traffic renders exactly as before.
+    // test/locale-follow.test.js asserts both tables share one shape.
+    copy: {
+      "zh-CN": {
+        // Hub-leg status lines (own card, peer cards).
+        hubStatus: {
+          idle: "未连接 — 请先配置 hub",
+          gray: "预热中",
+          green: "hub 链路质量良好",
+          yellow: "注意 — hub 链路临界",
+          red: "hub 链路差或不可达",
+        },
+        // Local-leg status lines (performer cards).
+        localStatus: {
+          gray: "预热中…",
+          green: "本地网络良好",
+          yellow: "注意 — 本地网络临界",
+          red: "本地网络差或演奏者掉线",
+        },
+        // The overall banner's network-wide verdict.
+        overall: {
+          idle: "未连接 — 请先配置 hub",
+          gray: "测量中",
+          green: "适宜演奏",
+          yellow: "临界网络，谨慎",
+          red: "不适宜演出",
+        },
+        // Hub-leg reasons (lib/hub-leg.js keys + params).
+        hubReasons: {
+          unreachable: "hub 不可达",
+          warmup: "预热中",
+          reconnectsRed: "最近 {1} 秒内重连 {0} 次",
+          jitterRed: "抖动（IQR）{0} ms ≥ {1} ms",
+          lossRed: "丢包率 {0}% ≥ {1}%",
+          linkGood: "链路质量良好",
+          reconnectYellow: "最近 {0} 秒内 1 次重连",
+          jitterYellow: "抖动（IQR）{0} ms ≥ {1} ms",
+          lossYellow: "丢包率 {0}% ≥ {1}%",
+        },
+        // Local-leg reasons (lib/local-leg.js keys, LND's vocabulary).
+        localReasons: {
+          warmup: "预热中",
+          disconnected: "已断开",
+          consecutiveTimeouts: "连续 3 次探针超时",
+          burstTimeoutRate: "突发期超时率超过 5%",
+          jitter: "时间抖动过大",
+          rtt: "响应过慢",
+          timeout: "近期探针超时",
+          green: "本地网络良好",
+          outsideSafe: "超出安全阈值",
+        },
+        // Event-log labels (hub-leg + local-leg event types).
+        events: {
+          connected: "已连接",
+          disconnected: "已断开",
+          reconnected: "已重连",
+          stopped: "已停止",
+          "connect failed": "连接失败",
+        },
+        // Event details the server itself words (external diagnostics
+        // — socket.io reasons, error messages — stay raw).
+        eventDetails: {
+          noHubConfigured: "未配置 hub",
+        },
+        monitor: {
+          sub: "监视端 — 全网视图",
+          overallLabel: "总体",
+          formTitle: "Hub 连接",
+          formUrl: "Hub URL",
+          formToken: "Token",
+          formRoom: "Room",
+          formNode: "节点名",
+          connect: "连接",
+          formHint:
+            "表单保存在浏览器 localStorage，重开无需重填；App 注入的 env（PNDS_HUB_URL 等）会作为预填默认值。",
+          starHint:
+            "辐条 = hub 腿（标注 RTT p50，颜色 = 质量）；外环 = 本地腿（灰 = 无数据）",
+          starNotConnected: "未连接 hub — 连接后显示全网星型图",
+          selfBadge: "本站",
+          localTitle: "本地腿 — 本站演奏者",
+          countOnline: "· {0} 在线",
+          emptyLocal: "暂无演奏者 — 扫下方二维码，手机连上即自动开始测量",
+          logTitle: "公网腿事件",
+          noEvents: "暂无事件",
+          scan: "扫码打开演奏者页面",
+          qrAlt: "演奏者页面二维码",
+          selfTag: "本站",
+          burst: "突发",
+          performer: "演奏者 ",
+          ownFallback: "本站",
+          rttP50: "RTT p50 典型往返",
+          rttP95: "RTT p95 尾部往返",
+          oneWay: "单程估计 ≈ RTT/2",
+          jitterIqr: "抖动（IQR）",
+          jitterP95: "抖动 p95",
+          loss: "丢包",
+          performers: "演奏者",
+          localLeg: "本地腿",
+          noData: "无数据",
+          sitePair: "站点对",
+          perfPair: "演奏者对",
+          segLocal: "本地",
+          segHub: "hub",
+          waitSite: "等待两段测量",
+          waitPerf: "等待本地腿测量",
+          peerUnreachable: "对端不可达",
+          // Banner attribution templates ({node} = the peer's id).
+          attribHubRed: "问题在 {node} 公网腿",
+          attribHubYellow: "临界：{node} 公网腿",
+          attribLocalRed: "问题在 {node} 本地腿",
+          attribLocalYellow: "临界：{node} 本地腿",
+          attribSelfHubRed: "问题在本站公网腿",
+          attribSelfHubYellow: "临界：本站公网腿",
+          attribSelfLocalRed: "问题在本站本地腿",
+          attribSelfLocalYellow: "临界：本站本地腿",
+        },
+        ago: { just: "刚刚", seconds: " 秒前", minutes: " 分钟前" },
+      },
+      en: {
+        hubStatus: {
+          idle: "Not connected — configure the hub",
+          gray: "Warming up",
+          green: "Hub link quality good",
+          yellow: "Caution — borderline hub link",
+          red: "Hub link poor or unreachable",
+        },
+        localStatus: {
+          gray: "Warming up…",
+          green: "Local network good",
+          yellow: "Caution — borderline local network",
+          red: "Local network poor or performer offline",
+        },
+        overall: {
+          idle: "Not connected — configure the hub",
+          gray: "Measuring…",
+          green: "Suitable for performance",
+          yellow: "Caution — borderline network",
+          red: "Not suitable for performance",
+        },
+        hubReasons: {
+          unreachable: "Hub unreachable",
+          warmup: "Warming up",
+          reconnectsRed: "{0} reconnects in the last {1}s",
+          jitterRed: "Jitter (IQR) {0} ms ≥ {1} ms",
+          lossRed: "Loss {0}% ≥ {1}%",
+          linkGood: "Link quality good",
+          reconnectYellow: "1 reconnect in the last {0}s",
+          jitterYellow: "Jitter (IQR) {0} ms ≥ {1} ms",
+          lossYellow: "Loss {0}% ≥ {1}%",
+        },
+        localReasons: {
+          warmup: "Warming up",
+          disconnected: "Disconnected",
+          consecutiveTimeouts: "3 consecutive probe timeouts",
+          burstTimeoutRate: "Burst timeout rate above 5%",
+          jitter: "High timing variation",
+          rtt: "Slow responses",
+          timeout: "Recent probe timeouts",
+          green: "Local network good",
+          outsideSafe: "Outside safe thresholds",
+        },
+        events: {
+          connected: "Connected",
+          disconnected: "Disconnected",
+          reconnected: "Reconnected",
+          stopped: "Stopped",
+          "connect failed": "Connect failed",
+        },
+        eventDetails: {
+          noHubConfigured: "no hub configured",
+        },
+        monitor: {
+          sub: "Monitor — flower view",
+          overallLabel: "Overall",
+          formTitle: "Hub connection",
+          formUrl: "Hub URL",
+          formToken: "Token",
+          formRoom: "Room",
+          formNode: "Node name",
+          connect: "Connect",
+          formHint:
+            "The form persists in the browser's localStorage — no re-typing on reopen; env injected by the App (PNDS_HUB_URL, …) prefills the defaults.",
+          starHint:
+            "Spokes = hub legs (RTT p50 labeled, color = quality); outer rings = local legs (gray = no data)",
+          starNotConnected:
+            "Not connected to the hub — the network star view appears once connected",
+          selfBadge: "This site",
+          localTitle: "Local leg — this site's performers",
+          countOnline: "· {0} online",
+          emptyLocal:
+            "No performers yet — scan the QR below; phones start measuring automatically",
+          logTitle: "Hub-leg events",
+          noEvents: "No events yet",
+          scan: "Scan to open the performer page",
+          qrAlt: "QR code for the performer page",
+          selfTag: "This site",
+          burst: "burst",
+          performer: "Performer ",
+          ownFallback: "This node",
+          rttP50: "RTT p50 typical",
+          rttP95: "RTT p95 tail",
+          oneWay: "One-way ≈ RTT/2",
+          jitterIqr: "Jitter (IQR)",
+          jitterP95: "Jitter p95",
+          loss: "Loss",
+          performers: "Performers",
+          localLeg: "Local leg",
+          noData: "n/a",
+          sitePair: "Site pair",
+          perfPair: "Performer pair",
+          segLocal: "local",
+          segHub: "hub",
+          waitSite: "waiting for both legs",
+          waitPerf: "waiting for local legs",
+          peerUnreachable: "peer unreachable",
+          attribHubRed: "Problem: {node} hub leg",
+          attribHubYellow: "Borderline: {node} hub leg",
+          attribLocalRed: "Problem: {node} local leg",
+          attribLocalYellow: "Borderline: {node} local leg",
+          attribSelfHubRed: "Problem: this site's hub leg",
+          attribSelfHubYellow: "Borderline: this site's hub leg",
+          attribSelfLocalRed: "Problem: this site's local leg",
+          attribSelfLocalYellow: "Borderline: this site's local leg",
+        },
+        ago: { just: "just now", seconds: "s ago", minutes: "m ago" },
+      },
     },
 
     // Performer roster cap (id space, PlayerRegistry) and the
@@ -89,17 +303,6 @@
         total += segments[j];
       }
       return Math.round(total * 10) / 10;
-    },
-
-    // The overall banner's network-wide verdict (LND's copy — the
-    // go/no-go question the conductor reads first). Attribution names
-    // the offending leg: "本站公网腿" or "<node> 公网腿".
-    overallCopy: {
-      idle: "Not connected — configure the hub · 未连接——请配置 hub",
-      gray: "Measuring… · 测量中",
-      green: "Suitable for performance · 适宜演奏",
-      yellow: "Caution — borderline network · 临界网络，谨慎",
-      red: "Not suitable for performance · 不适宜演出",
     },
 
     // Status → CSS class helpers, shared by both pages (the st-*

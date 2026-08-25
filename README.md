@@ -55,8 +55,20 @@ audio mode `none` only.
   cross-site details.
 - **A deployable hub** — token auth (timing-safe comparison), rooms,
   relay with sender stamps, systemd unit + Caddy/wss guide.
+- **Theme & locale following** — inside PNDS App (theme ≥ v1.2.3,
+  locale ≥ v1.3.0) the monitor page follows the App's color theme
+  (all four themes) via the `pnds:theme` bridge and the App's language
+  (English / 简体中文) via the `pnds:locale` bridge and the `?lang=`
+  first-frame parameter — every label, status line, reason and event
+  renders live in the App's language; the performer page stays as-is.
 
 ### Status
+
+v0.2.0 (issue #7): locale following — the monitor page follows the
+App's language (`pnds:locale` bridge + `?lang=` first frame) and
+renders its whole console through bilingual copy tables (default
+Chinese, this project's historical UI); server-side reasons became
+language-neutral keys so the wire carries no prose.
 
 v0.1.0 complete (issues #2–#6): de-templatized score server (performer
 / monitor dual server, health, theme following), the deployable hub,
@@ -187,11 +199,13 @@ Deployment guide (systemd, Caddy + wss, bare-ws quick path):
 ```
 hub/      The relay: hub.js + tnd-hub.service (systemd unit) — NOT in the .pnds
 lib/      Reusable core (config / network / health / lifecycle /
-          qr / theme-follow / status / hub-leg / local-leg + players /
-          flower)
-public/   Browser side (performer + monitor pages)
+          qr / theme-follow / locale-follow / status / hub-leg /
+          local-leg + players / flower)
+public/   Browser side (performer + monitor pages; shared.js holds the
+          bilingual copy tables)
 test/     node --test (config / integration / hub / hub-leg /
-          local-leg / players / flower / pages / theme-follow)
+          local-leg / players / flower / pages / theme-follow /
+          locale-follow)
 docs/     Hub deployment guide
 ```
 
@@ -240,8 +254,18 @@ SuperCollider：工程仅以 audio mode `none` 运行。
   （本站本地腿、本站 hub 腿），无任何跨站细节。
 - **可部署 hub**——token 鉴权（timing-safe 比较）、房间、带发送方戳的
   中继、systemd unit + Caddy/wss 指南。
+- **主题与语言跟随**——在 PNDS App 中运行时（主题 ≥ v1.2.3、语言 ≥
+  v1.3.0），monitor 页通过 `pnds:theme` 消息跟随 App 主题（全部四套），
+  通过 `pnds:locale` 消息与 `?lang=` 首帧参数实时跟随 App 语言
+  （English / 简体中文）——所有标签、状态文案、原因与事件随 App 语言
+  即时切换；performer 页保持原样。
 
 ### 状态
+
+v0.2.0（issue #7）：语言跟随——monitor 页跟随 App 语言（`pnds:locale`
+消息 + `?lang=` 首帧参数），全部界面经双语文案表渲染（默认中文，即本
+工程的历史界面）；server 侧 reason 改为语言中立 key，线协议不再携带
+散文。
 
 v0.1.0 完成（issue #2–#6）：去模板化 score server（performer /
 monitor 双 server、health、主题跟随）、可部署 hub、hub 腿测量 +
@@ -357,11 +381,12 @@ HUB_TOKEN=$(openssl rand -hex 24) HUB_PORT=4000 npm run hub
 ```
 hub/      中继：hub.js + tnd-hub.service（systemd unit）——不进 .pnds
 lib/      可复用核心（config / network / health / lifecycle /
-          qr / theme-follow / status / hub-leg / local-leg + players /
-          flower）
-public/   浏览器端（performer + monitor 页面）
+          qr / theme-follow / locale-follow / status / hub-leg /
+          local-leg + players / flower）
+public/   浏览器端（performer + monitor 页面；shared.js 存双语文案表）
 test/     node --test（config / integration / hub / hub-leg /
-          local-leg / players / flower / pages / theme-follow）
+          local-leg / players / flower / pages / theme-follow /
+          locale-follow）
 docs/     hub 部署指南
 ```
 

@@ -156,7 +156,7 @@ const good = {
 test("decideStatus: Green when every metric is inside the safe thresholds", () => {
   assert.deepEqual(decideStatus(good), {
     status: STATUS.GREEN,
-    reason: "Local network good · 本地网络良好",
+    reason: "green",
   });
 });
 
@@ -164,7 +164,7 @@ test("decideStatus: LAN latency participates — RTT p95 above 100 ms is Yellow"
   // The structural opposite of the hub leg (lib/hub-leg.js: no RTT
   // input at all). A slow LAN reply IS a local problem.
   assert.equal(decideStatus({ ...good, rttP95: 101 }).status, STATUS.YELLOW);
-  assert.equal(decideStatus({ ...good, rttP95: 120 }).reason, "Slow responses");
+  assert.equal(decideStatus({ ...good, rttP95: 120 }).reason, "rtt");
   // …but a merely middling RTT is fine when stable.
   assert.equal(decideStatus({ ...good, rttP95: 49 }).status, STATUS.GREEN);
 });
@@ -216,21 +216,21 @@ test("decideStatus: missing metrics count as zero, not as violations", () => {
 test("decideStatus: 1–2 consecutive timeouts are Yellow, never Green", () => {
   assert.equal(decideStatus({ ...good, consecutiveTimeouts: 1 }).status, STATUS.YELLOW);
   assert.equal(decideStatus({ ...good, consecutiveTimeouts: 2 }).status, STATUS.YELLOW);
-  assert.equal(decideStatus({ ...good, consecutiveTimeouts: 1 }).reason, "Recent probe timeouts");
+  assert.equal(decideStatus({ ...good, consecutiveTimeouts: 1 }).reason, "timeout");
 });
 
 test("decideStatus: reasons describe the winning rule", () => {
-  assert.equal(decideStatus({ ...good, disconnected: true }).reason, "Disconnected");
+  assert.equal(decideStatus({ ...good, disconnected: true }).reason, "disconnected");
   assert.equal(
     decideStatus({ ...good, consecutiveTimeouts: 3 }).reason,
-    "3 consecutive probe timeouts",
+    "consecutiveTimeouts",
   );
   assert.equal(
     decideStatus({ ...good, burstTimeoutRate: 0.06 }).reason,
-    "Burst timeout rate above 5%",
+    "burstTimeoutRate",
   );
-  assert.equal(decideStatus({ ...good, jitterP95: 26 }).reason, "High timing variation");
-  assert.equal(decideStatus({ ...good, rttP95: 60 }).reason, "Outside safe thresholds");
+  assert.equal(decideStatus({ ...good, jitterP95: 26 }).reason, "jitter");
+  assert.equal(decideStatus({ ...good, rttP95: 60 }).reason, "outsideSafe");
 });
 
 // ------------------------------------------------------------
@@ -248,7 +248,7 @@ test("StatusMachine: gray while warming up, then green", () => {
 
   machine.cycle(good);
   assert.equal(machine.status, STATUS.GREEN);
-  assert.equal(machine.reason, "Local network good · 本地网络良好");
+  assert.equal(machine.reason, "green");
 });
 
 test("StatusMachine: gray until there is evidence, red still reachable without any ack", () => {
@@ -275,12 +275,12 @@ test("StatusMachine: red after 3 consecutive timeouts, yellow on jitter/rtt", ()
 
   machine.cycle({ ...good, consecutiveTimeouts: 3, samples: 1 });
   assert.equal(machine.status, STATUS.RED);
-  assert.equal(machine.reason, "3 consecutive probe timeouts");
+  assert.equal(machine.reason, "consecutiveTimeouts");
 
   const yellow = new StatusMachine({ warmupCycles: 1 });
   yellow.cycle({ ...good, jitterP95: 30, samples: 1 });
   assert.equal(yellow.status, STATUS.YELLOW);
-  assert.equal(yellow.reason, "High timing variation");
+  assert.equal(yellow.reason, "jitter");
 });
 
 test("StatusMachine: worsening is instant, recovery needs 10 good cycles", () => {
@@ -366,7 +366,7 @@ test("StatusMachine: disconnected is Red immediately, even during warm-up", () =
   // A disconnect skips the warm-up gray guard — priority 1 of the spec.
   machine.cycle({ ...good, disconnected: true, samples: 0 });
   assert.equal(machine.status, STATUS.RED);
-  assert.equal(machine.reason, "Disconnected");
+  assert.equal(machine.reason, "disconnected");
 
   // From Green, a disconnect flips Red instantly and resets recovery credit.
   const healthy = new StatusMachine({ warmupCycles: 1 });
@@ -533,7 +533,7 @@ test("LocalSession: disconnectClient flips Red immediately and records the event
 
   const snap = session.snapshot();
   assert.equal(snap.clients["1"].status, STATUS.RED);
-  assert.equal(snap.clients["1"].reason, "Disconnected");
+  assert.equal(snap.clients["1"].reason, "disconnected");
   assert.equal(snap.clients["1"].connected, false);
   assert.equal(snap.clients["1"].lastEvent.type, "disconnected");
   assert.equal(snap.clients["1"].lastEvent.at, 4000);
@@ -569,7 +569,7 @@ test("LocalSession: burst window stats feed the status decision", () => {
   assert.equal(snap.probing, "burst");
   assert.equal(snap.clients["1"].metrics.burstTimeoutRate, 0.5);
   assert.equal(snap.clients["1"].status, STATUS.RED);
-  assert.equal(snap.clients["1"].reason, "Burst timeout rate above 5%");
+  assert.equal(snap.clients["1"].reason, "burstTimeoutRate");
 });
 
 test("LocalSession: snapshot exposes the site summary, loss rate, processing time and events", () => {

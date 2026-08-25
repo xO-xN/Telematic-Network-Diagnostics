@@ -80,77 +80,79 @@ const QUALITY_TABLE = [
     name: "disconnected → red unreachable (priority 1)",
     input: { connected: false, samples: 100, lost: 0, iqrMs: 1, lossRate: 0, reconnects: 0 },
     status: STATUS.RED,
-    reason: /unreachable/i,
+    reason: "unreachable",
   },
   {
     name: "warm-up: connected, too few samples, no negative evidence → gray",
     input: { connected: true, samples: WARMUP_SAMPLES - 1, lost: 0, iqrMs: null, lossRate: 0, reconnects: 0 },
     status: STATUS.GRAY,
-    reason: /warming/i,
+    reason: "warmup",
   },
   {
     name: "warm-up escape: all probes lost while connected → red via loss",
     input: { connected: true, samples: 0, lost: 3, iqrMs: null, lossRate: 1, reconnects: 0 },
     status: STATUS.RED,
-    reason: /loss/i,
+    reason: "lossRed",
   },
   {
     name: "all good → green",
     input: { connected: true, samples: ENOUGH, lost: 0, iqrMs: 4, lossRate: 0.001, reconnects: 0 },
     status: STATUS.GREEN,
+    reason: "linkGood",
   },
   {
     name: "green boundary: IQR just under 10, loss just under 0.5%",
     input: { connected: true, samples: ENOUGH, lost: 0, iqrMs: 9.9, lossRate: 0.0049, reconnects: 0 },
     status: STATUS.GREEN,
+    reason: "linkGood",
   },
   {
     name: "yellow via jitter: IQR in [10, 30)",
     input: { connected: true, samples: ENOUGH, lost: 0, iqrMs: 15, lossRate: 0, reconnects: 0 },
     status: STATUS.YELLOW,
-    reason: /iqr/i,
+    reason: "jitterYellow",
   },
   {
     name: "yellow via loss: rate in [0.5%, 3%)",
     input: { connected: true, samples: ENOUGH, lost: 0, iqrMs: 2, lossRate: 0.01, reconnects: 0 },
     status: STATUS.YELLOW,
-    reason: /loss/i,
+    reason: "lossYellow",
   },
   {
     name: "warm-up escape: 1 reconnect during warm-up → yellow, not gray",
     input: { connected: true, samples: 2, lost: 0, iqrMs: 3, lossRate: 0, reconnects: 1 },
     status: STATUS.YELLOW,
-    reason: /1 reconnect/i,
+    reason: "reconnectYellow",
   },
   {
     name: "warm-up escape: 2 reconnects during warm-up → red",
     input: { connected: true, samples: 2, lost: 0, iqrMs: 3, lossRate: 0, reconnects: 2 },
     status: STATUS.RED,
-    reason: /2 reconnects/i,
+    reason: "reconnectsRed",
   },
   {
     name: "yellow via exactly one reconnect in the window",
     input: { connected: true, samples: ENOUGH, lost: 0, iqrMs: 2, lossRate: 0, reconnects: 1 },
     status: STATUS.YELLOW,
-    reason: /1 reconnect/i,
+    reason: "reconnectYellow",
   },
   {
     name: "red via jitter: IQR ≥ 30",
     input: { connected: true, samples: ENOUGH, lost: 0, iqrMs: 30, lossRate: 0, reconnects: 0 },
     status: STATUS.RED,
-    reason: /iqr/i,
+    reason: "jitterRed",
   },
   {
     name: "red via loss: rate ≥ 3%",
     input: { connected: true, samples: ENOUGH, lost: 0, iqrMs: 2, lossRate: 0.03, reconnects: 0 },
     status: STATUS.RED,
-    reason: /loss/i,
+    reason: "lossRed",
   },
   {
     name: "red via repeated reconnects (priority over other reds)",
     input: { connected: true, samples: ENOUGH, lost: 0, iqrMs: 40, lossRate: 0.2, reconnects: 2 },
     status: STATUS.RED,
-    reason: /2 reconnects/i,
+    reason: "reconnectsRed",
   },
 ];
 
@@ -159,12 +161,42 @@ for (const row of QUALITY_TABLE) {
     const result = hubQuality(row.input);
 
     assert.equal(result.status, row.status, `reason was: ${result.reason}`);
-
-    if (row.reason) {
-      assert.match(result.reason, row.reason);
-    }
+    assert.equal(result.reason, row.reason);
   });
 }
+
+test("hubQuality: reasons are language-neutral keys with preformatted params", () => {
+  // The wire carries keys (the monitor maps them through the copy
+  // table of the current locale); the numbers ride reasonParams as
+  // ready-to-insert strings.
+  const jitter = hubQuality({
+    connected: true, samples: 40, lost: 0, iqrMs: 30, lossRate: 0, reconnects: 0,
+  });
+
+  assert.equal(jitter.reason, "jitterRed");
+  assert.deepEqual(jitter.reasonParams, ["30.0", "30"]);
+
+  const reconnects = hubQuality({
+    connected: true, samples: 40, lost: 0, iqrMs: 2, lossRate: 0, reconnects: 2,
+  });
+
+  assert.equal(reconnects.reason, "reconnectsRed");
+  assert.deepEqual(
+    reconnects.reasonParams,
+    ["2", "15"],
+    "the rolling window is 15 s",
+  );
+
+  const staticKeys = [
+    { connected: false },
+    { connected: true, samples: 1, lost: 0, iqrMs: null, lossRate: 0, reconnects: 0 },
+    { connected: true, samples: 40, lost: 0, iqrMs: 4, lossRate: 0, reconnects: 0 },
+  ];
+
+  for (const input of staticKeys) {
+    assert.deepEqual(hubQuality(input).reasonParams, []);
+  }
+});
 
 test("hubQuality: latency magnitude never participates (structural)", () => {
   // A high-but-stable intercontinental link: every RTT ~250 ms, so the
@@ -350,7 +382,7 @@ test("HubLeg: disconnect flips red immediately; reconnect counts and recovers", 
   assert.equal(up.summary.reconnects, 1);
   // 1 reconnect keeps the link yellow even with good numbers.
   assert.equal(up.status, STATUS.YELLOW);
-  assert.match(up.reason, /1 reconnect/i);
+  assert.equal(up.reason, "reconnectYellow");
 });
 
 test("HubLeg: the phase cycle runs automatically — burst density, calm baseline, repeating", async (t) => {
@@ -448,7 +480,7 @@ function statsBodyFrom(from, overrides = {}) {
     connected: true,
     probing: "calm",
     status: "green",
-    reason: "Link quality good",
+    reason: "linkGood",
     summary: { rttP50: 41, rttP95: 55, samples: 20 },
     local: { status: "green", p50: 3.5, performers: 3 },
     ...overrides,
@@ -545,7 +577,7 @@ test("HubLeg: relayed peer stats land in the roster; foreign types ignored", (t)
   leg.start();
   socket.deliver("connect");
 
-  socket.deliver("relay", statsBodyFrom("site-b", { status: "yellow", reason: "Jitter (IQR) 15.0 ms ≥ 10 ms" }));
+  socket.deliver("relay", statsBodyFrom("site-b", { status: "yellow", reason: "jitterYellow", reasonParams: ["15.0", "10"] }));
   socket.deliver("relay", { type: "something-else", from: "site-x" });
   socket.deliver("relay", { type: "tnd-stats" }); // no from — dropped
   // A malformed local summary is foreign input: normalized to "no
@@ -556,7 +588,9 @@ test("HubLeg: relayed peer stats land in the roster; foreign types ignored", (t)
 
   assert.ok(snapshot.peers["site-b"], "the peer lands in the roster");
   assert.equal(snapshot.peers["site-b"].status, "yellow");
-  assert.equal(snapshot.peers["site-b"].reason, "Jitter (IQR) 15.0 ms ≥ 10 ms");
+  assert.equal(snapshot.peers["site-b"].reason, "jitterYellow");
+  assert.deepEqual(snapshot.peers["site-b"].reasonParams, ["15.0", "10"],
+    "the relayed params ride along for the monitor's templates");
   assert.equal(snapshot.peers["site-b"].summary.rttP50, 41);
   assert.deepEqual(snapshot.peers["site-b"].local, {
     status: "green",

@@ -23,21 +23,30 @@
 //                     performer QR
 //
 // RTT numbers are never colored anywhere — only quality is.
+//
+// All copy renders through the shared bilingual tables (shared.js
+// `copy`), picked by the current locale (locale-follow.js follows the
+// App language — the page re-renders live on every language switch;
+// default Chinese, this project's historical UI).
 
 const P = window.PNDS;
+const L = window.PNDS_LOCALE;
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 const app = document.getElementById("app");
 
+// The skeleton is built once; every label-carrying node gets an id so
+// render() can re-word the chrome without touching the form inputs (a
+// language switch must never wipe what the operator is typing).
 app.innerHTML =
   "<header>" +
   "<h1>Telematic Network Diagnostics</h1>" +
-  '<span class="sub">Monitor — flower view</span>' +
+  '<span class="sub" id="sub-label"></span>' +
   "</header>" +
   '<div class="overall st-idle" id="banner">' +
   '<span class="dot"></span>' +
-  '<span class="overall-label">Overall</span>' +
+  '<span class="overall-label" id="overall-label"></span>' +
   '<span class="overall-copy" id="banner-copy">…</span>' +
   '<span class="attribution" id="banner-attribution"></span>' +
   "</div>" +
@@ -46,36 +55,35 @@ app.innerHTML =
   // screens).
   '<div class="two-col">' +
   '<div class="panel" id="form-panel">' +
-  "<h3>Hub 连接 · Hub connection</h3>" +
+  '<h3 id="form-title"></h3>' +
   '<div class="form-grid">' +
-  '<label>Hub URL<input id="f-url" placeholder="wss://hub.example.com" /></label>' +
-  '<label>Token<input id="f-token" type="password" placeholder="HUB_TOKEN" /></label>' +
-  '<label>Room<input id="f-room" placeholder="default" /></label>' +
-  '<label>Node 节点名<input id="f-node" placeholder="site name" /></label>' +
+  '<label><span id="l-url"></span><input id="f-url" placeholder="wss://hub.example.com" /></label>' +
+  '<label><span id="l-token"></span><input id="f-token" type="password" placeholder="HUB_TOKEN" /></label>' +
+  '<label><span id="l-room"></span><input id="f-room" placeholder="default" /></label>' +
+  '<label><span id="l-node"></span><input id="f-node" placeholder="site name" /></label>' +
   "</div>" +
   '<div class="form-actions">' +
-  '<button id="b-connect">连接 · Connect</button>' +
+  '<button id="b-connect"></button>' +
   "</div>" +
-  '<div class="hint">表单保存在浏览器 localStorage，重开无需重填；' +
-  "App 注入的 env（PNDS_HUB_URL 等）会作为预填默认值。</div>" +
+  '<div class="hint" id="form-hint"></div>' +
   "</div>" +
   '<div class="panel star-panel" id="star-panel">' +
   '<div id="star"></div>' +
-  '<div class="hint">辐条 = hub 腿（标注 RTT p50，颜色 = 质量）· 外环 = 本地腿（灰 = 无数据）</div>' +
+  '<div class="hint" id="star-hint"></div>' +
   "</div>" +
   "</div>" +
   '<div class="panel wide" id="local-panel">' +
-  "<h3>本地腿 · Local leg — 本站演奏者 <span class=\"count\" id=\"local-count\"></span></h3>" +
+  '<h3><span id="local-title"></span> <span class="count" id="local-count"></span></h3>' +
   '<div class="local-cards" id="local-cards"></div>' +
   "</div>" +
   '<div id="cards"></div>' +
   '<div class="panel" id="log-panel">' +
-  "<h3>公网腿事件 · Hub-leg events</h3>" +
+  "<h3 id=\"log-title\"></h3>" +
   '<div class="log" id="log"></div>' +
   "</div>" +
   '<div class="qr-row">' +
-  '<img src="/qr" alt="QR code for the performer page" />' +
-  '<span class="sub">Scan to open the performer page</span>' +
+  '<img src="/qr" id="qr-img" alt="" />' +
+  '<span class="sub" id="scan-label"></span>' +
   "</div>";
 
 const bannerEl = document.getElementById("banner");
@@ -91,6 +99,34 @@ const roomInput = document.getElementById("f-room");
 const nodeInput = document.getElementById("f-node");
 const connectButton = document.getElementById("b-connect");
 const logEl = document.getElementById("log");
+const chromeEls = {
+  sub: document.getElementById("sub-label"),
+  overallLabel: document.getElementById("overall-label"),
+  formTitle: document.getElementById("form-title"),
+  formUrl: document.getElementById("l-url"),
+  formToken: document.getElementById("l-token"),
+  formRoom: document.getElementById("l-room"),
+  formNode: document.getElementById("l-node"),
+  formHint: document.getElementById("form-hint"),
+  starHint: document.getElementById("star-hint"),
+  localTitle: document.getElementById("local-title"),
+  logTitle: document.getElementById("log-title"),
+  scan: document.getElementById("scan-label"),
+  qrImg: document.getElementById("qr-img"),
+};
+
+// The copy table of the current locale (Chinese fallback — the table
+// the page rendered before locale following existed).
+function T() {
+  return P.copy[L.current()] || P.copy["zh-CN"];
+}
+
+// {0}/{1} placeholder filling for reason templates and the like.
+function fmt(template, params) {
+  return template.replace(/\{(\d+)\}/g, (whole, index) =>
+    params && params[index] !== undefined ? params[index] : whole,
+  );
+}
 
 let state = null;
 let formPrefilled = false;
@@ -107,6 +143,12 @@ socket.on(P.events.state, (data) => {
   state = data;
   render();
 });
+
+// The App language switch re-renders the whole console through the new
+// locale's copy table (latest value wins; same value re-pushes change
+// nothing). The form inputs are NOT rebuilt — the operator's typing
+// survives a mid-edit language switch.
+L.subscribe(render);
 
 // Auto-start (zero buttons): whenever the socket (re)connects, submit
 // the STARTUP config if it is usable. The server no-ops an identical
@@ -206,7 +248,7 @@ function localState() {
 }
 
 function ownName() {
-  return (state && state.config && state.config.nodeId) || "This node";
+  return (state && state.config && state.config.nodeId) || T().monitor.ownFallback;
 }
 
 function sortedPeers(info) {
@@ -222,6 +264,26 @@ function render() {
   if (state) {
     prefillForm(); // first state-bearing render only (guard inside)
   }
+
+  // The chrome re-words on every render — including the ones a locale
+  // switch triggers, when nothing else changed.
+  const m = T().monitor;
+
+  chromeEls.sub.textContent = m.sub;
+  chromeEls.overallLabel.textContent = m.overallLabel;
+  chromeEls.formTitle.textContent = m.formTitle;
+  chromeEls.formUrl.textContent = m.formUrl;
+  chromeEls.formToken.textContent = m.formToken;
+  chromeEls.formRoom.textContent = m.formRoom;
+  chromeEls.formNode.textContent = m.formNode;
+  connectButton.textContent = m.connect;
+  chromeEls.formHint.textContent = m.formHint;
+  chromeEls.starHint.textContent = m.starHint;
+  chromeEls.localTitle.textContent = m.localTitle;
+  chromeEls.logTitle.textContent = m.logTitle;
+  chromeEls.scan.textContent = m.scan;
+  chromeEls.qrImg.setAttribute("alt", m.qrAlt);
+
   renderBanner();
   renderStar();
   renderLocal();
@@ -229,16 +291,31 @@ function render() {
   renderLog();
 }
 
+// The reason line: a key from the wire mapped through the current
+// locale's table (params fill the {0}/{1} placeholders). An unknown
+// key — e.g. prose relayed by a peer still on an older release —
+// renders verbatim, never blank.
+function reasonLine(key, params, table) {
+  if (!key) {
+    return "";
+  }
+
+  const template = table[key];
+  return template === undefined ? key : fmt(template, params);
+}
+
 function renderBanner() {
+  const t = T();
   const overall = state ? state.overall : null;
   const status = overall ? overall.status : "idle";
 
   setStatus(bannerEl, status);
-  bannerCopyEl.textContent = P.overallCopy[status] || "";
+  bannerCopyEl.textContent = t.overall[status] || "";
 
   // Plain attribution copy: which site's which leg is the problem —
-  // 公网腿 (hub) or 本地腿 (local). Yellow softens the wording; red
-  // blames outright.
+  // hub (公网腿) or local (本地腿). Yellow softens the wording; red
+  // blames outright. One template per leg/verb/self combination, {node}
+  // filled with the peer's id.
   bannerAttributionEl.textContent = "";
 
   if (
@@ -246,16 +323,16 @@ function renderBanner() {
     overall.attributionNodeId &&
     (status === "red" || status === "yellow")
   ) {
-    const legWord = overall.attributionLeg === "local" ? "本地腿" : "公网腿";
-    const where = overall.attributionSelf
-      ? "本站" + legWord
-      : overall.attributionNodeId + " " + legWord;
-    const verb = status === "red" ? "问题在" : "临界：";
-    // A space before a latin node name (Chinese-latin typography),
-    // none before 本站.
-    const gap = overall.attributionSelf ? "" : " ";
+    const legWord = overall.attributionLeg === "local" ? "Local" : "Hub";
+    const verb = status.charAt(0).toUpperCase() + status.slice(1);
+    const key =
+      "attrib" + (overall.attributionSelf ? "Self" : "") + legWord + verb;
+    const template = t.monitor[key] || "";
 
-    bannerAttributionEl.textContent = verb + gap + where;
+    bannerAttributionEl.textContent = template.replace(
+      /\{node\}/g,
+      overall.attributionNodeId,
+    );
   }
 }
 
@@ -267,7 +344,7 @@ function renderStar() {
   const info = leg();
 
   if (!info) {
-    starEl.append(el("div", "hint", "未连接 hub — 连接后显示全网星型图"));
+    starEl.append(el("div", "hint", T().monitor.starNotConnected));
     return;
   }
 
@@ -358,7 +435,7 @@ function renderStar() {
     svg.append(nameLabel);
 
     if (node.self) {
-      const badge = svgText(x, y - 27, "本站", "self-badge");
+      const badge = svgText(x, y - 27, T().monitor.selfBadge, "self-badge");
 
       badge.setAttribute("text-anchor", "middle");
       svg.append(badge);
@@ -386,6 +463,7 @@ function renderCards() {
 }
 
 function renderOwnCard(name, info) {
+  const t = T();
   const card = el("div", "client-card " + statusClass(info.status));
   const head = el("div", "head");
   const local = localState();
@@ -393,27 +471,35 @@ function renderOwnCard(name, info) {
 
   head.append(
     el("span", "dot on"),
-    el("span", null, name + (info.probing === "burst" ? " · burst" : "")),
-    el("span", "tag", "本站"),
+    el(
+      "span",
+      null,
+      name + (info.probing === "burst" ? " · " + t.monitor.burst : ""),
+    ),
+    el("span", "tag", t.monitor.selfTag),
     el("span", "status-word", info.status.toUpperCase()),
   );
   card.append(
     head,
-    el("div", "copy", P.statusCopy[info.status] || ""),
-    el("div", "reason", info.reason || ""),
+    el("div", "copy", t.hubStatus[info.status] || ""),
+    el(
+      "div",
+      "reason",
+      reasonLine(info.reason, info.reasonParams, t.hubReasons),
+    ),
   );
 
   const rows = el("div");
   const summary = info.summary || {};
 
   rows.append(
-    metricRow("RTT p50 典型往返", formatMs(summary.rttP50)),
-    metricRow("RTT p95 尾部往返", formatMs(summary.rttP95)),
-    metricRow("One-way ≈ RTT/2 单程估计", formatMs(summary.oneWayEstimateMs, 1)),
-    metricRow("Jitter (IQR) 抖动", formatMs(summary.iqrMs, 1)),
-    metricRow("Loss 丢包", formatPct(summary.lossRate)),
-    metricRow("Performers 演奏者", String(local ? local.performers : 0)),
-    metricRow("Local leg 本地腿", localStatus || "无数据 · n/a"),
+    metricRow(t.monitor.rttP50, formatMs(summary.rttP50)),
+    metricRow(t.monitor.rttP95, formatMs(summary.rttP95)),
+    metricRow(t.monitor.oneWay, formatMs(summary.oneWayEstimateMs, 1)),
+    metricRow(t.monitor.jitterIqr, formatMs(summary.iqrMs, 1)),
+    metricRow(t.monitor.loss, formatPct(summary.lossRate)),
+    metricRow(t.monitor.performers, String(local ? local.performers : 0)),
+    metricRow(t.monitor.localLeg, localStatus || t.monitor.noData),
   );
   card.append(rows);
 
@@ -421,6 +507,7 @@ function renderOwnCard(name, info) {
 }
 
 function renderPeerCard(nodeId, peer, own) {
+  const t = T();
   const status = peer.status; // snapshot already coerced offline → red
   const card = el("div", "client-card " + statusClass(status));
   const head = el("div", "head");
@@ -432,8 +519,14 @@ function renderPeerCard(nodeId, peer, own) {
   );
   card.append(
     head,
-    el("div", "copy", P.statusCopy[status] || ""),
-    el("div", "reason", peer.connected ? peer.reason || "" : "Hub unreachable"),
+    el("div", "copy", t.hubStatus[status] || ""),
+    el(
+      "div",
+      "reason",
+      peer.connected
+        ? reasonLine(peer.reason, peer.reasonParams, t.hubReasons)
+        : reasonLine("unreachable", [], t.hubReasons),
+    ),
   );
 
   const summary = peer.summary || {};
@@ -450,7 +543,7 @@ function renderPeerCard(nodeId, peer, own) {
 
   const siteBlock = el("div", "derived");
 
-  siteBlock.append(el("div", "derived-k", "站点对 Site pair"));
+  siteBlock.append(el("div", "derived-k", t.monitor.sitePair));
 
   if (total !== null) {
     siteBlock.append(
@@ -465,7 +558,7 @@ function renderPeerCard(nodeId, peer, own) {
   } else {
     siteBlock.append(
       el("div", "big", "—"),
-      el("div", "formula", peer.connected ? "等待两段测量" : "对端不可达"),
+      el("div", "formula", peer.connected ? t.monitor.waitSite : t.monitor.peerUnreachable),
     );
   }
 
@@ -483,7 +576,7 @@ function renderPeerCard(nodeId, peer, own) {
 
   const perfBlock = el("div", "derived");
 
-  perfBlock.append(el("div", "derived-k", "演奏者对 Performer pair"));
+  perfBlock.append(el("div", "derived-k", t.monitor.perfPair));
 
   if (perfTotal !== null) {
     perfBlock.append(
@@ -491,14 +584,16 @@ function renderPeerCard(nodeId, peer, own) {
       el(
         "div",
         "formula",
-        "本地 " + Math.round(ownLocalP50) + " + hub " + Math.round(ownP50) +
-          " + hub " + Math.round(peerP50) + " + 本地 " + Math.round(peerLocalP50) + " ms",
+        t.monitor.segLocal + " " + Math.round(ownLocalP50) +
+          " + " + t.monitor.segHub + " " + Math.round(ownP50) +
+          " + " + t.monitor.segHub + " " + Math.round(peerP50) +
+          " + " + t.monitor.segLocal + " " + Math.round(peerLocalP50) + " ms",
       ),
     );
   } else {
     perfBlock.append(
       el("div", "big", "—"),
-      el("div", "formula", peer.connected ? "等待本地腿测量 · waiting for local legs" : "对端不可达"),
+      el("div", "formula", peer.connected ? t.monitor.waitPerf : t.monitor.peerUnreachable),
     );
   }
 
@@ -507,10 +602,13 @@ function renderPeerCard(nodeId, peer, own) {
   const rows = el("div");
 
   rows.append(
-    metricRow("RTT p50 典型往返", formatMs(summary.rttP50)),
-    metricRow("RTT p95 尾部往返", formatMs(summary.rttP95)),
-    metricRow("Performers 演奏者", String(peer.local ? peer.local.performers : 0)),
-    metricRow("Local leg 本地腿", (peer.local && peer.local.status) || "无数据 · n/a"),
+    metricRow(t.monitor.rttP50, formatMs(summary.rttP50)),
+    metricRow(t.monitor.rttP95, formatMs(summary.rttP95)),
+    metricRow(t.monitor.performers, String(peer.local ? peer.local.performers : 0)),
+    metricRow(
+      t.monitor.localLeg,
+      (peer.local && peer.local.status) || t.monitor.noData,
+    ),
   );
   card.append(rows);
 
@@ -534,16 +632,10 @@ function renderLocal() {
   );
 
   localCountEl.textContent =
-    entries.length > 0 ? "· " + local.performers + " online" : "";
+    entries.length > 0 ? fmt(T().monitor.countOnline, [local.performers]) : "";
 
   if (entries.length === 0) {
-    localCardsEl.append(
-      el(
-        "div",
-        "hint",
-        "暂无演奏者 — 扫下方二维码，手机连上即自动开始测量 · No performers yet — scan the QR below",
-      ),
-    );
+    localCardsEl.append(el("div", "hint", T().monitor.emptyLocal));
     return;
   }
 
@@ -553,28 +645,39 @@ function renderLocal() {
 }
 
 function renderPerformerCard(probing, id, client) {
+  const t = T();
   const card = el("div", "client-card " + statusClass(client.status));
   const head = el("div", "head");
 
   head.append(
     el("span", "dot on"),
-    el("span", null, "演奏者 " + id + (probing === "burst" ? " · burst" : "")),
+    el(
+      "span",
+      null,
+      t.monitor.performer + id + (probing === "burst" ? " · " + t.monitor.burst : ""),
+    ),
     el("span", "status-word", client.status.toUpperCase()),
   );
   card.append(
     head,
-    el("div", "copy", P.localCopy[client.status] || ""),
-    el("div", "reason", client.connected ? client.reason || "" : "Disconnected"),
+    el("div", "copy", t.localStatus[client.status] || ""),
+    el(
+      "div",
+      "reason",
+      client.connected
+        ? reasonLine(client.reason, null, t.localReasons)
+        : reasonLine("disconnected", null, t.localReasons),
+    ),
   );
 
   const metrics = client.metrics || {};
   const rows = el("div");
 
   rows.append(
-    metricRow("RTT p50 典型往返", formatMs(metrics.rttP50)),
-    metricRow("RTT p95 尾部往返", formatMs(metrics.rttP95)),
-    metricRow("Jitter p95 抖动", formatMs(metrics.jitterP95)),
-    metricRow("Loss 丢包", formatPct(metrics.lossRate)),
+    metricRow(t.monitor.rttP50, formatMs(metrics.rttP50)),
+    metricRow(t.monitor.rttP95, formatMs(metrics.rttP95)),
+    metricRow(t.monitor.jitterP95, formatMs(metrics.jitterP95)),
+    metricRow(t.monitor.loss, formatPct(metrics.lossRate)),
   );
   card.append(rows);
 
@@ -598,12 +701,14 @@ function renderPerformerCard(probing, id, client) {
 }
 
 function renderLog() {
+  const t = T();
+
   logEl.textContent = "";
   const info = leg();
   const events = info ? info.events || [] : [];
 
   if (events.length === 0) {
-    logEl.append(el("div", "entry", "No events yet"));
+    logEl.append(el("div", "entry", t.monitor.noEvents));
     return;
   }
 
@@ -614,7 +719,8 @@ function renderLog() {
     entry.append(
       type,
       document.createTextNode(
-        (event.detail ? " — " + event.detail : "") + "  ·  " + agoText(event.agoMs),
+        (event.detail ? " — " + detailText(event.detail, t) : "") +
+          "  ·  " + agoText(event.agoMs),
       ),
     );
     logEl.append(entry);
@@ -668,23 +774,36 @@ function formatPct(value) {
 }
 
 function eventLabel(type) {
-  return type.charAt(0).toUpperCase() + type.slice(1);
+  const t = T();
+
+  return (
+    t.events[type] || type.charAt(0).toUpperCase() + type.slice(1)
+  );
+}
+
+// Event details the server itself words carry a key mapped through
+// the table; external diagnostics (socket.io reasons, error messages)
+// stay verbatim.
+function detailText(detail, t) {
+  return t.eventDetails[detail] || detail;
 }
 
 function agoText(agoMs) {
+  const t = T();
+
   if (typeof agoMs !== "number") {
     return "";
   }
 
   if (agoMs < 1000) {
-    return "just now";
+    return t.ago.just;
   }
 
   if (agoMs < 60000) {
-    return Math.round(agoMs / 1000) + "s ago";
+    return Math.round(agoMs / 1000) + t.ago.seconds;
   }
 
-  return Math.round(agoMs / 60000) + "m ago";
+  return Math.round(agoMs / 60000) + t.ago.minutes;
 }
 
 render();

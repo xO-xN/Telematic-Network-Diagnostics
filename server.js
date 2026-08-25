@@ -120,12 +120,18 @@ monitorApp.get(
   qrHandler(`http://${hostLanIp}:${serverConfig.performerPort}/`),
 );
 
-// The one lib/ file the monitor page loads in the browser: the
-// theme-bridge module (spec §5.3), served under the App-contract
+// The lib/ files the monitor page loads in the browser: the theme and
+// locale bridge modules (App contract — theme spec §5.3, network
+// reference "Locale Following"), served under the App-contract
 // namespace like /__pnds/health. Monitor port only — the performer
-// branch of the page never loads it and keeps the project's own colors.
+// branch of the page never loads them and keeps the project's own
+// colors and copy.
 monitorApp.get("/__pnds/theme-follow.js", (request, response) => {
   response.sendFile(path.join(PROJECT_ROOT, "lib", "theme-follow.js"));
+});
+
+monitorApp.get("/__pnds/locale-follow.js", (request, response) => {
+  response.sendFile(path.join(PROJECT_ROOT, "lib", "locale-follow.js"));
 });
 
 // ------------------------------------------------------------
@@ -395,7 +401,7 @@ function configureHubLeg({ url, token, room, nodeId }) {
   } else {
     hubEvents.push({
       type: "stopped",
-      detail: "no hub configured",
+      detail: "noHubConfigured",
       at: Date.now(),
     });
   }

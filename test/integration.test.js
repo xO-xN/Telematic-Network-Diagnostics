@@ -311,7 +311,7 @@ test("hub leg: env auto-connect, live stats, burst, disconnect/reconnect, form c
     8000,
   );
 
-  assert.match(down.leg.reason, /unreachable/i);
+  assert.equal(down.leg.reason, "unreachable");
   assert.ok(
     down.leg.events.some((event) => event.type === "disconnected"),
     "the disconnect is in the event log",
@@ -332,7 +332,7 @@ test("hub leg: env auto-connect, live stats, burst, disconnect/reconnect, form c
   );
 
   assert.equal(up.leg.status, "yellow", "one reconnect keeps the window yellow");
-  assert.match(up.leg.reason, /1 reconnect/i);
+  assert.equal(up.leg.reason, "reconnectYellow");
 
   // --- the form channel replaces the env channel ---
   monitor.emit(EVENTS.hubConfig, {
@@ -449,7 +449,7 @@ test("local leg: join → auto-probed → green → disconnect red → token rec
 
   assert.equal(down.local.status, "red", "the SITE summary includes the disconnected performer");
   assert.equal(down.local.performers, 0);
-  assert.equal(down.local.clients["1"].reason, "Disconnected");
+  assert.equal(down.local.clients["1"].reason, "disconnected");
   assert.equal(down.local.clients["1"].lastEvent.type, "disconnected");
 
   // --- the phone comes back with its claim token: same id, recovery ---
@@ -492,7 +492,7 @@ test("local leg: join → auto-probed → green → disconnect red → token rec
 
   const monitorJs = await (await fetch(`${MONITOR_URL}/monitor.js`)).text();
   assert.match(monitorJs, /renderLocal/, "the local panel renders");
-  assert.match(monitorJs, /localCopy/, "local-leg copy comes from shared.js");
+  assert.match(monitorJs, /localStatus/, "local-leg copy comes from shared.js's copy tables");
   assert.match(monitorJs, /P\.events\.state/, "renders the state broadcast");
 });
 

@@ -10,6 +10,7 @@ const test = require("node:test");
 const vm = require("node:vm");
 
 const PUBLIC_DIR = path.join(__dirname, "..", "public");
+const ROOT_DIR = path.join(__dirname, "..");
 
 // A DOM node stub: id-addressed (pages build markup via innerHTML
 // strings and then getElementById — the stub mirrors that contract,
@@ -72,9 +73,10 @@ function makeNode(tag) {
   return node;
 }
 
-// Loads shared.js + the page script into a fresh sandbox. Returns the
+// Loads shared.js (+ optionally the locale bridge, the way the monitor
+// page does) and the page script into a fresh sandbox. Returns the
 // sandbox plus the captured socket (listeners + emitted events).
-function loadPage(file) {
+function loadPage(file, { localeSearch } = {}) {
   const ids = new Map();
   const document = {
     createElement: (tag) => makeNode(tag),
@@ -86,6 +88,7 @@ function loadPage(file) {
       }
       return ids.get(id);
     },
+    documentElement: { lang: "zh-CN" },
   };
 
   const socket = {
@@ -103,11 +106,18 @@ function loadPage(file) {
   const sandbox = {
     console,
     document,
-    location: { hostname: "127.0.0.1", port: "6869" },
+    location: { hostname: "127.0.0.1", port: "6869", search: "" },
     performance: { now: () => 0 },
     io: () => socket,
     setTimeout,
     clearTimeout,
+  };
+  const messageListeners = [];
+
+  sandbox.addEventListener = (type, handler) => {
+    if (type === "message") {
+      messageListeners.push(handler);
+    }
   };
 
   sandbox.storage = new Map();
@@ -125,12 +135,21 @@ function loadPage(file) {
     fs.readFileSync(path.join(PUBLIC_DIR, "shared.js"), "utf8"),
     context,
   );
+  // The monitor page always loads the locale bridge before its script
+  // (see public/index.html); the performer page never does.
+  if (file === "monitor.js") {
+    sandbox.location.search = localeSearch;
+    vm.runInContext(
+      fs.readFileSync(path.join(ROOT_DIR, "lib", "locale-follow.js"), "utf8"),
+      context,
+    );
+  }
   vm.runInContext(
     fs.readFileSync(path.join(PUBLIC_DIR, file), "utf8"),
     context,
   );
 
-  return { sandbox, socket, document };
+  return { sandbox, socket, document, messageListeners };
 }
 
 function deliver(socket, sandbox, event, payload) {
@@ -150,7 +169,8 @@ function sampleState() {
       connected: true,
       probing: "calm",
       status: "green",
-      reason: "Link quality good",
+      reason: "linkGood",
+      reasonParams: [],
       local: { status: "green", p50: 1, performers: 1 },
       summary: {
         samples: 20, lost: 0, reconnects: 0, rttP50: 12.5, rttP95: 20,
@@ -161,7 +181,8 @@ function sampleState() {
           connected: true,
           probing: "burst",
           status: "yellow",
-          reason: "Jitter (IQR) 12.0 ms ≥ 10 ms",
+          reason: "jitterYellow",
+          reasonParams: ["12.0", "10"],
           summary: {
             samples: 18, lost: 0, reconnects: 0, rttP50: 40, rttP95: 60,
             iqrMs: 12, lossRate: 0, oneWayEstimateMs: 20,
@@ -180,7 +201,7 @@ function sampleState() {
       clients: {
         "1": {
           status: "green",
-          reason: "Local network good",
+          reason: "green",
           connected: true,
           lastEvent: { type: "connected", at: 1, agoMs: 4000 },
           events: [
@@ -300,6 +321,117 @@ test("monitor page: a saved form wins over the env prefill", () => {
 
   assert.equal(auto.length, 1);
   assert.equal(auto[0][1].url, "http://saved");
+});
+
+// ------------------------------------------------------------
+// Monitor page — locale following (the App language bridge)
+// ------------------------------------------------------------
+
+const LOCALE_MESSAGE = (locale) => ({
+  data: { type: "pnds:locale", version: 1, locale },
+});
+
+test("monitor page: renders Chinese by default, before any bridge traffic", () => {
+  const page = loadPage("monitor.js", { localeSearch: "" });
+
+  deliver(page.socket, page.sandbox, page.sandbox.PNDS.events.state, sampleState());
+
+  assert.equal(page.document.getElementById("sub-label").textContent, "监视端 — 全网视图");
+  assert.equal(page.document.getElementById("form-title").textContent, "Hub 连接");
+  assert.equal(page.document.getElementById("b-connect").textContent, "连接");
+  assert.equal(page.document.getElementById("banner-copy").textContent, "不适宜演出");
+  assert.equal(
+    page.document.getElementById("banner-attribution").textContent,
+    "问题在 site-b 本地腿",
+  );
+
+  // The performer card's reason line maps the wire key through the
+  // Chinese table.
+  const card = page.document.getElementById("local-cards").children[0];
+  const reason = card.children.find((node) => node.classList.contains("reason"));
+
+  assert.equal(reason.textContent, "本地网络良好");
+});
+
+test("monitor page: a locale message re-renders the whole console live", () => {
+  const page = loadPage("monitor.js", { localeSearch: "" });
+
+  deliver(page.socket, page.sandbox, page.sandbox.PNDS.events.state, sampleState());
+
+  // The App switches its language to English.
+  for (const handler of page.messageListeners) {
+    handler(LOCALE_MESSAGE("en"));
+  }
+
+  assert.equal(page.document.getElementById("sub-label").textContent, "Monitor — flower view");
+  assert.equal(page.document.getElementById("form-title").textContent, "Hub connection");
+  assert.equal(page.document.getElementById("b-connect").textContent, "Connect");
+  assert.equal(
+    page.document.getElementById("banner-copy").textContent,
+    "Not suitable for performance",
+  );
+  assert.equal(
+    page.document.getElementById("banner-attribution").textContent,
+    "Problem: site-b local leg",
+  );
+
+  const card = page.document.getElementById("local-cards").children[0];
+  const head = card.children[0];
+
+  assert.equal(head.children[1].textContent, "Performer 1 · burst");
+
+  // A malformed message changes nothing.
+  for (const handler of page.messageListeners) {
+    handler({ data: { type: "other", version: 1, locale: "zh-CN" } });
+    handler({ data: null });
+  }
+
+  assert.equal(page.document.getElementById("b-connect").textContent, "Connect");
+  assert.equal(page.sandbox.PNDS_LOCALE.current(), "en");
+
+  // Back to Chinese (a language switch in the other direction).
+  for (const handler of page.messageListeners) {
+    handler(LOCALE_MESSAGE("zh-CN"));
+  }
+
+  assert.equal(page.document.getElementById("b-connect").textContent, "连接");
+});
+
+test("monitor page: ?lang= seeds the first frame before any message", () => {
+  const page = loadPage("monitor.js", { localeSearch: "?lang=en&theme=stage" });
+
+  deliver(page.socket, page.sandbox, page.sandbox.PNDS.events.state, sampleState());
+
+  assert.equal(page.document.getElementById("b-connect").textContent, "Connect");
+  assert.equal(page.document.documentElement.lang, "en");
+});
+
+test("monitor page: a language switch never clobbers the form inputs", () => {
+  const page = loadPage("monitor.js", { localeSearch: "" });
+  const state = sampleState();
+
+  state.env = {
+    hubUrl: "http://env-hub",
+    hubToken: "env-token",
+    hubRoom: "",
+    nodeId: "",
+  };
+
+  deliver(page.socket, page.sandbox, page.sandbox.PNDS.events.state, state);
+  assert.equal(page.document.getElementById("f-url").value, "http://env-hub");
+
+  // The operator edits the node name mid-session…
+  page.document.getElementById("f-node").value = "my editing";
+
+  // …a locale switch re-words the chrome but leaves the inputs alone.
+  for (const handler of page.messageListeners) {
+    handler(LOCALE_MESSAGE("en"));
+  }
+
+  assert.equal(page.document.getElementById("l-node").textContent, "Node name");
+  assert.equal(page.document.getElementById("f-url").value, "http://env-hub");
+  assert.equal(page.document.getElementById("f-node").value, "my editing");
+  assert.equal(page.document.getElementById("l-url").textContent, "Hub URL");
 });
 
 // ------------------------------------------------------------

@@ -1,6 +1,6 @@
 {
   "name": "telematic-network-diagnostics",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "PNDS score project for cross-internet network diagnostics: measures the hub leg (score server to public hub) and the local leg (performer to score server) of a hub/star telematic setup.",
   "main": "server.js",
@@ -10,7 +10,7 @@
   "scripts": {
     "start": "node server.js",
     "hub": "node hub/hub.js",
-    "check": "node --check server.js && node --check lib/config.js && node --check lib/network.js && node --check lib/health.js && node --check lib/lifecycle.js && node --check lib/qr.js && node --check lib/status.js && node --check lib/theme-follow.js && node --check lib/hub-leg.js && node --check lib/local-leg.js && node --check lib/players.js && node --check lib/flower.js && node --check hub/hub.js && node --check public/shared.js && node --check public/monitor.js && node --check public/performer.js",
+    "check": "node --check server.js && node --check lib/config.js && node --check lib/network.js && node --check lib/health.js && node --check lib/lifecycle.js && node --check lib/qr.js && node --check lib/status.js && node --check lib/theme-follow.js && node --check lib/locale-follow.js && node --check lib/hub-leg.js && node --check lib/local-leg.js && node --check lib/players.js && node --check lib/flower.js && node --check hub/hub.js && node --check public/shared.js && node --check public/monitor.js && node --check public/performer.js",
     "test": "node --test"
   },
   "dependencies": {

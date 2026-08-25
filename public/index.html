@@ -30,11 +30,12 @@
         window.location.port === String(window.PNDS.monitorPort);
 
       if (window.PNDS_IS_MONITOR) {
-        // Theme following (spec §5.3): the monitor page follows the
-        // App's pushed theme. The derive hook maps the App palette to
-        // this page's status colors (WCAG-tuned per surface by the
-        // module itself) — the options global must exist before the
-        // module loads.
+        // Theme following (spec §5.3) and locale following (network
+        // reference "Locale Following"): the monitor page follows the
+        // App's pushed theme and language. The derive hook maps the App
+        // palette to this page's status colors (WCAG-tuned per surface
+        // by the module itself) — the options global must exist before
+        // the module loads.
         window.PNDS_THEME_OPTIONS = {
           derive: function (palette) {
             return window.PNDS_THEME.statusVariables(palette);
@@ -42,6 +43,9 @@
         };
         document.write(
           '\x3Cscript src="/__pnds/theme-follow.js"\x3E\x3C/script\x3E',
+        );
+        document.write(
+          '\x3Cscript src="/__pnds/locale-follow.js"\x3E\x3C/script\x3E',
         );
         document.write('\x3Cscript src="monitor.js"\x3E\x3C/script\x3E');
       } else {
