@@ -50,10 +50,10 @@ app.innerHTML =
   '<span class="overall-copy" id="banner-copy">…</span>' +
   '<span class="attribution" id="banner-attribution"></span>' +
   "</div>" +
-  // Balanced two-column row: the connection form on the left, the
-  // star diagram on the right, equal widths (stacks on narrow
-  // screens).
-  '<div class="two-col">' +
+  // Compact three-column top row — everything the operator watches at
+  // once, no scrolling: connection form (2×2), star diagram, and the
+  // hub-leg cards (own + peers) as a column. Stacks on narrow screens.
+  '<div class="top-grid">' +
   '<div class="panel" id="form-panel">' +
   '<h3 id="form-title"></h3>' +
   '<div class="form-grid">' +
@@ -71,19 +71,28 @@ app.innerHTML =
   '<div id="star"></div>' +
   '<div class="hint" id="star-hint"></div>' +
   "</div>" +
-  "</div>" +
-  '<div class="panel wide" id="local-panel">' +
-  '<h3><span id="local-title"></span> <span class="count" id="local-count"></span></h3>' +
-  '<div class="local-cards" id="local-cards"></div>' +
-  "</div>" +
+  // Third column: the hub-leg cards, with the event log tucked under
+  // them — the column is otherwise shorter than the star, so the log
+  // fills existing space instead of adding a whole row to the page.
+  '<div class="cards-col">' +
   '<div id="cards"></div>' +
   '<div class="panel" id="log-panel">' +
   "<h3 id=\"log-title\"></h3>" +
   '<div class="log" id="log"></div>' +
   "</div>" +
-  '<div class="qr-row">' +
+  "</div>" +
+  "</div>" +
+  '<div class="panel wide" id="local-panel">' +
+  '<h3><span id="local-title"></span> <span class="count" id="local-count"></span></h3>' +
+  // Cards left, the join QR at the row's end — scan-sized (96px), its
+  // height absorbed by the performer cards beside it.
+  '<div class="local-row">' +
+  '<div class="local-cards" id="local-cards"></div>' +
+  '<div class="qr-inline">' +
   '<img src="/qr" id="qr-img" alt="" />' +
   '<span class="sub" id="scan-label"></span>' +
+  "</div>" +
+  "</div>" +
   "</div>";
 
 const bannerEl = document.getElementById("banner");
@@ -491,7 +500,7 @@ function renderOwnCard(name, info) {
     ),
   );
 
-  const rows = el("div");
+  const rows = el("div", "rows");
   const summary = info.summary || {};
 
   rows.append(
@@ -601,7 +610,7 @@ function renderPeerCard(nodeId, peer, own) {
 
   card.append(perfBlock);
 
-  const rows = el("div");
+  const rows = el("div", "rows");
 
   rows.append(
     metricRow(t.monitor.rttP50, formatMs(summary.rttP50)),
@@ -642,23 +651,21 @@ function renderLocal() {
   }
 
   for (const [id, client] of entries) {
-    localCardsEl.append(renderPerformerCard(local.probing, id, client));
+    localCardsEl.append(renderPerformerCard(id, client));
   }
 }
 
-function renderPerformerCard(probing, id, client) {
+// The performer card carries no burst/calm marker: its numbers are
+// load-scoped (burst samples only, steady across the cycle), so a phase
+// marker would only flicker every 2 s.
+function renderPerformerCard(id, client) {
   const t = T();
   const card = el("div", "client-card " + statusClass(client.status));
   const head = el("div", "head");
 
   head.append(
     el("span", "dot on"),
-    el(
-      "span",
-      null,
-      fmt(t.monitor.performer, [id]) +
-        (probing === "burst" ? " · " + t.monitor.burst : ""),
-    ),
+    el("span", null, fmt(t.monitor.performer, [id])),
     el("span", "status-word", client.status.toUpperCase()),
   );
   card.append(
@@ -674,7 +681,7 @@ function renderPerformerCard(probing, id, client) {
   );
 
   const metrics = client.metrics || {};
-  const rows = el("div");
+  const rows = el("div", "rows");
 
   rows.append(
     metricRow(t.monitor.rttP50, formatMs(metrics.rttP50)),

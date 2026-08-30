@@ -378,7 +378,9 @@ test("monitor page: a locale message re-renders the whole console live", () => {
   const card = page.document.getElementById("local-cards").children[0];
   const head = card.children[0];
 
-  assert.equal(head.children[1].textContent, "Performer 1 · burst");
+  // The performer card's title carries no burst/calm marker: the numbers
+  // are load-scoped (steady), so the phase marker would only flicker.
+  assert.equal(head.children[1].textContent, "Performer 1");
 
   // A malformed message changes nothing.
   for (const handler of page.messageListeners) {
@@ -443,7 +445,7 @@ test("monitor page: a language switch never clobbers the form inputs", () => {
 // Performer page
 // ------------------------------------------------------------
 
-test("performer page: joins with the persisted token, answers probes, paints the two dots", () => {
+test("performer page: joins with the persisted token, answers probes, paints the dots", () => {
   const page = loadPage("performer.js");
   const events = page.sandbox.PNDS.events;
 
@@ -473,11 +475,14 @@ test("performer page: joins with the persisted token, answers probes, paints the
   assert.equal(ack[1].seq, 7);
   assert.equal(typeof ack[1].t0, "number");
 
-  // The two dots read the state: local green, hub yellow.
+  // The site dots read the state: local green, hub green. This device's
+  // own dot stays gray — client 3 has no card in the sample state.
   deliver(page.socket, page.sandbox, events.state, sampleState());
 
   assert.ok(page.document.getElementById("row-local").classList.contains("st-green"));
   assert.ok(page.document.getElementById("row-hub").classList.contains("st-green"));
+  assert.ok(page.document.getElementById("row-self").classList.contains("st-gray"));
+  assert.equal(page.document.getElementById("w-self").textContent, "GRAY");
 
   assert.equal(page.document.getElementById("w-local").textContent, "GREEN");
 
@@ -500,4 +505,52 @@ test("performer page: joins with the persisted token, answers probes, paints the
     ),
     JSON.stringify({ token: "t".repeat(48) }),
   );
+});
+
+test("performer page: the own dot mirrors THIS device's local-leg card, live", () => {
+  const page = loadPage("performer.js");
+  const events = page.sandbox.PNDS.events;
+
+  deliver(page.socket, page.sandbox, events.joined, { id: 3, token: "t".repeat(48), recovered: false });
+
+  const withSelf = (status) => {
+    const state = sampleState();
+
+    state.local.clients["3"] = {
+      ...state.local.clients["1"],
+      status,
+    };
+    deliver(page.socket, page.sandbox, events.state, state);
+  };
+
+  // Every server verdict lands on the own dot as it is measured.
+  for (const status of ["gray", "green", "yellow", "red", "green"]) {
+    withSelf(status);
+
+    assert.ok(
+      page.document.getElementById("row-self").classList.contains("st-" + status),
+      status + " paints the own dot",
+    );
+    assert.equal(page.document.getElementById("w-self").textContent, status.toUpperCase());
+  }
+
+  // Another performer's verdict is not ours: client 1 red (the site
+  // summary follows the worst), ours green.
+  const foreign = sampleState();
+
+  foreign.local.clients["1"].status = "red";
+  foreign.local.status = "red";
+  foreign.local.clients["3"] = { ...foreign.local.clients["1"], status: "green" };
+  deliver(page.socket, page.sandbox, events.state, foreign);
+
+  assert.ok(page.document.getElementById("row-self").classList.contains("st-green"));
+  assert.ok(page.document.getElementById("row-local").classList.contains("st-red"), "the site row still reads the site worst");
+
+  // A disconnect clears the identity: the own dot goes gray and a late
+  // state broadcast must not repaint it.
+  deliver(page.socket, page.sandbox, "disconnect");
+
+  withSelf("red");
+  assert.ok(page.document.getElementById("row-self").classList.contains("st-gray"));
+  assert.equal(page.document.getElementById("w-self").textContent, "GRAY");
 });

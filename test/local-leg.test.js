@@ -384,6 +384,7 @@ test("StatusMachine: disconnected is Red immediately, even during warm-up", () =
 
 test("LocalSession: per-performer statuses; gray does not drag the site summary", () => {
   const session = new LocalSession();
+  session.setPhase("burst"); // the server's cycle starts in burst
 
   session.addClient(1);
   session.addClient(2);
@@ -403,6 +404,7 @@ test("LocalSession: per-performer statuses; gray does not drag the site summary"
 
 test("LocalSession: site summary status = worst across performers", () => {
   const session = new LocalSession();
+  session.setPhase("burst");
 
   session.addClient(1);
   session.addClient(2);
@@ -435,6 +437,7 @@ test("LocalSession: a DISCONNECTED performer's Red counts in the site summary (t
   // must read "it's A's local leg" when A's phone drops off Wi-Fi —
   // an online-only worst would hide exactly that.
   const session = new LocalSession();
+  session.setPhase("burst");
 
   session.addClient(1);
   session.addClient(2);
@@ -491,6 +494,7 @@ test("LocalSession: siteSummary — empty session, p50 = worst online median", (
 
 test("LocalSession: addClient records Connected; re-adding the same id is a Reconnect that resets to gray", () => {
   const session = new LocalSession();
+  session.setPhase("burst");
 
   session.addClient(1, 1000);
 
@@ -521,6 +525,7 @@ test("LocalSession: addClient records Connected; re-adding the same id is a Reco
 
 test("LocalSession: disconnectClient flips Red immediately and records the event", () => {
   const session = new LocalSession();
+  session.setPhase("burst");
 
   session.addClient(1, 1000);
   session.recordAck(1, 2);
@@ -595,4 +600,95 @@ test("LocalSession: snapshot exposes the site summary, loss rate, processing tim
   assert.equal(snap.status, "gray");
   assert.equal(snap.performers, 1);
   assert.equal(snap.probing, "calm");
+});
+
+test("MetricsCollector: jitter ignores the phase step and the wake-up sample", () => {
+  const collector = new MetricsCollector({ windowSize: 10 });
+
+  // A hot burst block; the calm block sits at the woken (idle) level — the
+  // Wi-Fi power-save wake-up every idle second adds to a 1 Hz probe.
+  [3, 3, 3, 3, 3, 3, 3, 3].forEach((rtt) => {
+    collector.record(rtt, null, "burst");
+  });
+  [80, 80].forEach((rtt) => collector.record(rtt, null, "calm"));
+
+  // Legacy whole-window math diffed 3 → 80 and reported the phase step
+  // itself as ~77 ms of jitter for the whole calm phase. Scoped: only
+  // same-phase, adjacent, non-wake-up pairs count.
+  assert.equal(collector.jitterP95, 0);
+  assert.equal(collector.rttP95, 3, "calm samples stay out of the RTT metrics");
+  assert.equal(collector.burstSampleCount, 8);
+  assert.equal(collector.lastRtt, 80, "the raw latest probe is untouched");
+});
+
+test("MetricsCollector: a burst that opens with a wake-up sample stays clean", () => {
+  const collector = new MetricsCollector({ windowSize: 10 });
+
+  [80, 80].forEach((rtt) => collector.record(rtt, null, "calm"));
+  // The first burst probe pays the wake-up; the radio is hot from the next.
+  collector.record(80, null, "burst");
+  [3, 3, 3].forEach((rtt) => collector.record(rtt, null, "burst"));
+
+  assert.equal(collector.jitterP95, 0, "the wake-up sample forms no pair");
+  assert.equal(collector.rttP95, 3, "nor enters the RTT percentiles");
+  assert.equal(collector.burstSampleCount, 3);
+});
+
+test("LocalSession: the calm wake-up step never flags a healthy performer", () => {
+  const session = new LocalSession();
+  session.setPhase("burst");
+  session.addClient(1);
+
+  for (let i = 0; i < 8; i += 1) {
+    session.recordAck(1, 3);
+  }
+  session.cycleAll();
+  session.cycleAll();
+  assert.equal(session.siteSummary().status, STATUS.GREEN);
+
+  // Calm: every idle second lets Wi-Fi power save add its wake-up delay,
+  // so each 1 Hz probe reads ~80 ms on an otherwise perfect link. The
+  // legacy window kept the burst samples beside them, read the phase step
+  // (~77 ms) off them as jitter and flagged Yellow for the whole calm
+  // phase — and the 10-cycle hysteresis could never recover to Green.
+  session.setPhase("calm");
+  session.recordAck(1, 80);
+  session.recordAck(1, 80);
+  session.cycleAll();
+  session.cycleAll();
+
+  let snap = session.snapshot();
+  assert.equal(snap.status, STATUS.GREEN);
+  assert.equal(snap.clients["1"].metrics.jitterP95, 0);
+  assert.equal(snap.clients["1"].metrics.rttP95, 3);
+
+  // The next burst opens with a wake-up sample before the radio is hot
+  // again; it must not swing the metrics either.
+  session.setPhase("burst");
+  session.recordAck(1, 80);
+  session.recordAck(1, 3);
+  session.recordAck(1, 3);
+  session.cycleAll();
+
+  snap = session.snapshot();
+  assert.equal(snap.status, STATUS.GREEN);
+  assert.equal(snap.clients["1"].metrics.jitterP95, 0);
+  assert.equal(snap.clients["1"].metrics.rttP95, 3);
+});
+
+test("LocalSession: a performer joining mid-calm stays Gray until load evidence", () => {
+  const session = new LocalSession();
+  session.setPhase("calm");
+  session.addClient(1);
+
+  session.recordAck(1, 80);
+  session.recordAck(1, 80);
+  session.cycleAll();
+  session.cycleAll();
+  session.cycleAll();
+  assert.equal(
+    session.snapshot().clients["1"].status,
+    STATUS.GRAY,
+    "calm acks alone are not show-condition evidence",
+  );
 });

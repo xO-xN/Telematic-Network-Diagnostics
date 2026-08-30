@@ -46,29 +46,34 @@ body {
   align-items: center;
   justify-content: center;
   min-height: 100vh;
-  padding: 20px;
+  padding: 10px 14px;
 }
 
 #app {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 16px;
+  gap: 8px;
   width: 100%;
 }
 
 header {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
   text-align: center;
 }
 
 header h1 {
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 600;
-  margin: 0 0 4px;
+  margin: 0;
 }
 
 header .sub {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--muted);
 }
 
@@ -112,19 +117,19 @@ header .sub {
 .overall {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   background: var(--card);
   border: 1px solid var(--track);
   border-radius: 12px;
-  padding: 14px 22px;
+  padding: 7px 14px;
   box-shadow: 0 1px 3px rgba(23, 26, 43, 0.08);
-  min-width: min(520px, 100%);
+  min-width: min(420px, 100%);
   justify-content: center;
 }
 
 .overall .dot {
-  width: 16px;
-  height: 16px;
+  width: 12px;
+  height: 12px;
   background: var(--st);
 }
 
@@ -140,6 +145,10 @@ header .sub {
   font-size: 14px;
   font-weight: 600;
   color: var(--st);
+}
+
+.attribution:empty {
+  display: none;
 }
 
 .attribution {
@@ -163,7 +172,10 @@ header .sub {
 }
 
 .star-svg {
-  width: min(420px, 100%);
+  /* Compact console: the star renders at ~270px, so the in-SVG label
+   * font sizes below are bumped to stay readable at that scale (the
+   * 360-unit viewBox scales everything proportionally). */
+  width: min(250px, 100%);
   height: auto;
 }
 
@@ -175,7 +187,7 @@ header .sub {
 
 .hub-label {
   fill: var(--muted);
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 700;
   text-anchor: middle;
 }
@@ -188,7 +200,7 @@ header .sub {
 
 .spoke-label {
   fill: var(--text);
-  font-size: 11px;
+  font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -205,13 +217,13 @@ header .sub {
 
 .node-name {
   fill: var(--text);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
 }
 
 .self-badge {
   fill: var(--accent);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
 }
 
@@ -219,22 +231,35 @@ header .sub {
  * Node cards (monitor)
  * ------------------------------------------------------------ */
 
+/* The top grid's third column: the hub-leg cards with the event log
+ * tucked underneath. The column is otherwise shorter than the star, so
+ * the log fills existing space instead of adding a row to the page; it
+ * grows with peers only when there is real content to show. */
+.cards-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
 #cards {
   display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 10px;
-  width: min(960px, 100%);
+  flex-direction: column;
+  gap: 8px;
+}
+
+#cards .client-card {
+  width: auto;
 }
 
 .client-card {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
   background: var(--card);
   border: 1px solid var(--track);
   border-radius: 10px;
-  padding: 10px 14px 12px;
+  padding: 8px 12px 10px;
   width: 250px;
   box-shadow: 0 1px 3px rgba(23, 26, 43, 0.06);
   border-left: 3px solid var(--st);
@@ -292,7 +317,7 @@ header .sub {
 }
 
 .client-card .derived .big {
-  font-size: 22px;
+  font-size: 19px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   color: var(--text);
@@ -304,19 +329,34 @@ header .sub {
   font-variant-numeric: tabular-nums;
 }
 
+.client-card .rows {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 12px;
+  row-gap: 4px;
+}
+
+/* Metric tiles: label above value, half a card wide each — a horizontal
+ * label/value pair wraps ugly at this width; a stacked tile cannot. */
 .client-card .row {
   display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  font-size: 12px;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
 }
 
 .client-card .row .k {
   color: var(--muted);
+  font-size: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .client-card .row .v {
   font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .client-card .events-line {
@@ -350,6 +390,39 @@ header .sub {
   width: 225px;
 }
 
+/* The local panel's content row: performer cards left, the join QR
+ * pinned to the row's end — scanning to join lives where the performer
+ * cards are, and the QR's height is absorbed by the cards beside it. */
+.local-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.qr-inline {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  margin-inline-start: auto;
+}
+
+.qr-inline img {
+  width: 96px;
+  height: 96px;
+  border-radius: 8px;
+  border: 1px solid var(--track);
+  background: #fff;
+}
+
+.qr-inline .sub {
+  font-size: 11px;
+  color: var(--muted);
+  max-width: 110px;
+  text-align: center;
+}
+
 /* ------------------------------------------------------------
  * Panels: form + star + event log (monitor)
  * ------------------------------------------------------------ */
@@ -358,42 +431,45 @@ header .sub {
   background: var(--card);
   border: 1px solid var(--track);
   border-radius: 10px;
-  padding: 12px 16px 14px;
+  padding: 10px 12px 12px;
   width: min(400px, 100%);
   box-shadow: 0 1px 3px rgba(23, 26, 43, 0.06);
 }
 
-/* The balanced two-column row: connection form left, star diagram
- * right, equal widths; stacks vertically on narrow screens. */
-.two-col {
-  display: flex;
-  gap: 16px;
+/* The compact three-column top row: connection form | star | hub-leg
+ * cards — everything the operator watches, one screen, no scrolling.
+ * Stacks vertically on narrow screens. */
+.top-grid {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) auto minmax(260px, 1.15fr);
+  gap: 12px;
   width: min(960px, 100%);
-  align-items: stretch;
+  align-items: start;
 }
 
-.two-col .panel {
-  flex: 1 1 0;
-  min-width: 0;
-}
-
-@media (max-width: 719px) {
-  .two-col {
-    flex-direction: column;
+@media (max-width: 639px) {
+  .top-grid {
+    grid-template-columns: 1fr;
   }
 }
 
 .panel h3 {
   font-size: 12px;
   font-weight: 700;
-  margin: 0 0 8px;
+  margin: 0 0 6px;
   color: var(--text);
 }
 
 .form-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 10px;
+}
+
+@media (max-width: 479px) {
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .form-grid label {
@@ -402,11 +478,14 @@ header .sub {
   gap: 3px;
   font-size: 11px;
   color: var(--muted);
+  min-width: 0;
 }
 
 .form-grid input {
   font-size: 13px;
   font-family: inherit;
+  width: 100%;
+  min-width: 0;
   padding: 7px 9px;
   border: 1px solid var(--track);
   border-radius: 8px;
@@ -423,7 +502,7 @@ header .sub {
 .form-actions {
   display: flex;
   gap: 8px;
-  margin-top: 10px;
+  margin-top: 8px;
 }
 
 .form-actions button {
@@ -448,7 +527,7 @@ header .sub {
 .hint {
   font-size: 11px;
   color: var(--muted);
-  margin-top: 8px;
+  margin-top: 6px;
 }
 
 /* ------------------------------------------------------------
@@ -459,10 +538,14 @@ header .sub {
   display: flex;
   flex-direction: column;
   gap: 3px;
+  /* The log is capped, not grown: an unbounded event history must never
+   * push the console past one screen — it scrolls inside its box. */
+  max-height: 64px;
+  overflow-y: auto;
 }
 
 .log .entry {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--muted);
 }
 
@@ -472,31 +555,8 @@ header .sub {
 }
 
 /* ------------------------------------------------------------
- * QR row (monitor)
- * ------------------------------------------------------------ */
-
-.qr-row {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-}
-
-.qr-row img {
-  width: 140px;
-  height: 140px;
-  border-radius: 10px;
-  border: 1px solid var(--track);
-  background: #fff;
-}
-
-.qr-row .sub {
-  font-size: 11px;
-  color: var(--muted);
-}
-
-/* ------------------------------------------------------------
- * Performer page (issue #5): LND-minimal, two site-level dots
+ * Performer page (issue #5): LND-minimal, three dots — this device's
+ * own verdict, this site's local leg, this site's hub leg
  * ------------------------------------------------------------ */
 
 .perf {

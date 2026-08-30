@@ -429,7 +429,10 @@ test("local leg: join → auto-probed → green → disconnect red → token rec
   const metrics = measured.local.clients["1"].metrics;
 
   assert.ok(metrics.rttP95 >= metrics.rttP50);
-  assert.ok(metrics.acks >= 30, `many probes answered: ${metrics.acks}`);
+  // Green is load-scoped: it legitimately arrives within the first burst
+  // window (~30 probes/s), so "measurement is underway" means a partial
+  // burst of acks, not a full lifetime count.
+  assert.ok(metrics.acks >= 10, `many probes answered: ${metrics.acks}`);
 
   // --- the automatic phase cycle keeps alternating (LND parity) ---
   await waitForState(monitor, (state) => state.local.probing === "burst");
