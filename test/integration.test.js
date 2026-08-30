@@ -749,7 +749,7 @@ test("shutdown: SIGTERM completes promptly with live clients still connected", a
 
   const server = spawn(process.execPath, ["server.js", "--audio-mode", "none"], {
     cwd: PROJECT_ROOT,
-    stdio: ["ignore", "ignore", "ignore"],
+    stdio: "ignore",
   });
   t.after(async () => stopProcess(server));
 
