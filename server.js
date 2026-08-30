@@ -570,6 +570,18 @@ io.on("connection", (socket) => {
 attachShutdown({
   onShutdown: async () => {
     health.setStopping();
+
+    // Drop every connected client first — the phone performers AND the
+    // monitor page's observer socket. io.close() waits for clients to
+    // take their disconnect; a phone on a weak network must not outlive
+    // the host's kill window. Per-step elapsed below: a slow step found
+    // in the wild is diagnosable from the output tail alone.
+    const t0 = Date.now();
+    io.disconnectSockets(true);
+    io.close();
+    const tSockets = Date.now() - t0;
+
+    const t1 = Date.now();
     clearInterval(stateTimer);
     clearInterval(localTimer);
     clearInterval(localBurstTimer);
@@ -581,9 +593,16 @@ attachShutdown({
       hubLeg.stop();
     }
 
-    io.close();
+    const tCleanup = Date.now() - t1;
+
+    const t2 = Date.now();
     await closeHttpServer(server);
     await closeHttpServer(monitorServer);
+    const tHttp = Date.now() - t2;
+
+    console.log(
+      `[shutdown] steps: sockets ${tSockets}ms, cleanup ${tCleanup}ms, http ${tHttp}ms`,
+    );
   },
 });
 
