@@ -482,11 +482,10 @@ function renderOwnCard(name, info) {
 
   head.append(
     el("span", "dot on"),
-    el(
-      "span",
-      null,
-      name + (info.probing === "burst" ? " · " + t.monitor.burst : ""),
-    ),
+    // Name only — no card carries a phase marker (#11); probing stays
+    // on the wire, it just has nothing to paint (see the note above
+    // renderPerformerCard for why).
+    el("span", null, name),
     el("span", "tag", t.monitor.selfTag),
     el("span", "status-word", info.status.toUpperCase()),
   );
@@ -679,9 +678,10 @@ function eventsLineText(events, labelFor) {
     .join(" · ");
 }
 
-// The performer card carries no burst/calm marker: its numbers are
-// load-scoped (burst samples only, steady across the cycle), so a phase
-// marker would only flicker every 2 s.
+// No card anywhere carries a burst/calm marker (#11): the numbers are
+// load-scoped (burst samples only, steady across the cycle), so a
+// phase marker would only flicker every 2 s — and the phase itself is
+// the measurement's business, not the operator's.
 function renderPerformerCard(id, client) {
   const t = T();
   const card = el("div", "client-card " + statusClass(client.status));

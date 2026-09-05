@@ -278,6 +278,27 @@ test("monitor page: renders the full flower picture without throwing", () => {
   assert.equal(cards.children.length, 2, "own card + one peer card");
 });
 
+test("monitor page: no burst marker anywhere — the phase is an internal detail (issue #11)", () => {
+  const page = loadPage("monitor.js");
+  const state = sampleState();
+
+  // Mid-burst on the hub leg: the last place a marker used to render
+  // (the own hub card's head) must stay name-only.
+  state.leg.probing = "burst";
+  deliver(page.socket, page.sandbox, page.sandbox.PNDS.events.state, state);
+
+  const card = page.document.getElementById("cards").children[0];
+  const head = card.children[0];
+
+  assert.equal(head.children[1].textContent, "site-a");
+
+  // The copy keys are gone from both tables — nothing left to render
+  // a marker with (the shape test in locale-follow.test.js pins the
+  // two tables to the same key set).
+  assert.equal(page.sandbox.PNDS.copy["zh-CN"].monitor.burst, undefined);
+  assert.equal(page.sandbox.PNDS.copy.en.monitor.burst, undefined);
+});
+
 test("monitor page: env prefill lands on the FIRST state, not the null-state load render", () => {
   const page = loadPage("monitor.js");
 
