@@ -14,7 +14,11 @@
 //   + lib/players.js, issue #5): performers join with a claim token
 //   and are probed automatically — same phase cycle, LND thresholds,
 //   disconnect → Red at once; the site's worst local status flows into
-//   the hub room announce and the flower view
+//   the hub room announce and the flower view. A voluntary exit
+//   (issue #10, the `leave` event) instead deletes the client outright:
+//   the card, the id and the claim-token binding all go, the site
+//   verdict stops counting the leg, and the same token rejoining is a
+//   fresh client.
 // - shuts down cleanly on SIGINT / SIGTERM
 //
 // Hub connection, two channels (issue #3, the Phase 0 validation
@@ -545,6 +549,31 @@ io.on("connection", (socket) => {
         : null;
 
     local.recordAck(id, Date.now() - pending.sentAt, processingMs);
+  });
+
+  // The performer page's voluntary exit (issue #10): the phone tapped
+  // 退出检测. The client is DELETED outright — no red card, no drag on
+  // the site verdict, the claim-token mapping and the slot are freed
+  // (a later join with the same token arrives as a brand-new client),
+  // and the exit lands in the site-level event log. The server then
+  // kicks the socket itself: the page cannot close it race-free (a
+  // close racing the leave packet's flush would drop the delete), and
+  // this way the teardown provably happens AFTER the deletion. The
+  // socket disconnect that follows finds nothing bound and changes
+  // nothing (disconnect → Red keeps its exact default behavior for
+  // every OTHER kind of drop).
+  socket.on(EVENTS.leave, () => {
+    const id = registry.findIdBySocket(socket.id);
+
+    if (id === null) {
+      return;
+    }
+
+    registry.release(id);
+    clearPending(id);
+    local.removeClient(id, Date.now());
+    broadcastState();
+    socket.disconnect(true);
   });
 
   socket.on("disconnect", () => {

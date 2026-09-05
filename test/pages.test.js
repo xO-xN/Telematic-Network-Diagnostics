@@ -20,6 +20,7 @@ function makeNode(tag) {
     tagName: tag,
     children: [],
     attributes: {},
+    listeners: {},
     classList: {
       set: new Set(),
       add(...names) {
@@ -43,7 +44,9 @@ function makeNode(tag) {
     append(...kids) {
       node.children.push(...kids.filter(Boolean));
     },
-    addEventListener() {},
+    addEventListener(type, handler) {
+      (node.listeners[type] = node.listeners[type] || []).push(handler);
+    },
   };
 
   Object.defineProperty(node, "textContent", {
@@ -73,6 +76,14 @@ function makeNode(tag) {
   return node;
 }
 
+// Fires every listener a stubbed node registered for an event type —
+// the page code's own click handlers, invoked directly.
+function click(node) {
+  for (const handler of node.listeners.click || []) {
+    handler();
+  }
+}
+
 // Loads shared.js (+ optionally the locale bridge, the way the monitor
 // page does) and the page script into a fresh sandbox. Returns the
 // sandbox plus the captured socket (listeners + emitted events).
@@ -94,13 +105,20 @@ function loadPage(file, { localeSearch } = {}) {
   const socket = {
     listeners: {},
     emitted: [],
+    opens: 0,
+    closes: 0,
     on(event, handler) {
       (this.listeners[event] = this.listeners[event] || []).push(handler);
     },
     emit(event, payload) {
       this.emitted.push([event, payload]);
     },
-    close() {},
+    open() {
+      this.opens += 1;
+    },
+    close() {
+      this.closes += 1;
+    },
   };
 
   const sandbox = {
@@ -553,4 +571,172 @@ test("performer page: the own dot mirrors THIS device's local-leg card, live", (
   withSelf("red");
   assert.ok(page.document.getElementById("row-self").classList.contains("st-gray"));
   assert.equal(page.document.getElementById("w-self").textContent, "GRAY");
+});
+
+// ------------------------------------------------------------
+// Performer page — voluntary exit (issue #10)
+// ------------------------------------------------------------
+
+test("performer page: leave button exits — leave emitted, socket closed, cover shown, dots gone", () => {
+  const page = loadPage("performer.js");
+  const events = page.sandbox.PNDS.events;
+
+  deliver(page.socket, page.sandbox, "connect");
+  deliver(page.socket, page.sandbox, events.joined, {
+    id: 1,
+    token: "t".repeat(48),
+    recovered: false,
+  });
+
+  // Paint the dots once (client 1 is green in the sample state).
+  deliver(page.socket, page.sandbox, events.state, sampleState());
+  assert.ok(page.document.getElementById("row-self").classList.contains("st-green"));
+
+  const cover = page.document.getElementById("left-cover");
+  const perf = page.document.getElementById("perf");
+  const leaveButton = page.document.getElementById("b-leave");
+
+  assert.ok(cover.classList.contains("hidden"), "the cover starts hidden");
+
+  click(leaveButton);
+
+  assert.ok(
+    page.socket.emitted.some(([event]) => event === events.leave),
+    "the leave packet is emitted",
+  );
+  assert.equal(page.socket.closes, 0, "the page does not close in the same tick (flush race)");
+  assert.ok(!cover.classList.contains("hidden"), "the left cover shows");
+  assert.ok(perf.classList.contains("hidden"), "the dots are gone");
+  assert.ok(leaveButton.classList.contains("hidden"), "the leave button is gone too");
+
+  // The server processed the leave and kicked the socket — the page
+  // closes for good (no auto-reconnect).
+  deliver(page.socket, page.sandbox, "disconnect");
+
+  assert.equal(page.socket.closes, 1);
+
+  // A state broadcast arriving while exited repaints nothing: the late
+  // broadcast says red, the (hidden) dots keep their last paint.
+  const turnedRed = sampleState();
+
+  turnedRed.local.clients["1"].status = "red";
+  deliver(page.socket, page.sandbox, events.state, turnedRed);
+  assert.ok(
+    page.document.getElementById("row-self").classList.contains("st-green"),
+    "no repaint while exited",
+  );
+
+  // The exit stays in memory only: localStorage carries the token and
+  // nothing else — a killed page reopening rejoins normally.
+  assert.deepEqual([...page.sandbox.storage.keys()], ["tnd-performer-token"]);
+});
+
+test("performer page: exited state does not auto-rejoin; the cover tap rejoins with the same token", () => {
+  const page = loadPage("performer.js");
+  const events = page.sandbox.PNDS.events;
+
+  deliver(page.socket, page.sandbox, "connect");
+  deliver(page.socket, page.sandbox, events.joined, {
+    id: 1,
+    token: "t".repeat(48),
+    recovered: false,
+  });
+
+  click(page.document.getElementById("b-leave"));
+
+  // The server's kick arrives (its processing of the leave): the page
+  // closes for good.
+  deliver(page.socket, page.sandbox, "disconnect");
+  assert.equal(page.socket.closes, 1);
+
+  // A stray connect while exited (lock/unlock, a socket.io leftover)
+  // must NOT re-join.
+  deliver(page.socket, page.sandbox, "connect");
+
+  assert.equal(
+    page.socket.emitted.filter(([event]) => event === events.join).length,
+    1,
+    "no join while exited",
+  );
+
+  // The whole cover is the rejoin button.
+  click(page.document.getElementById("left-cover"));
+
+  assert.equal(page.socket.opens, 1, "the socket is reopened");
+  assert.ok(page.document.getElementById("left-cover").classList.contains("hidden"));
+  assert.ok(!page.document.getElementById("perf").classList.contains("hidden"));
+
+  deliver(page.socket, page.sandbox, "connect");
+
+  const joins = page.socket.emitted.filter(([event]) => event === events.join);
+
+  assert.equal(joins.length, 2);
+  assert.equal(
+    joins[1][1].token,
+    "t".repeat(48),
+    "rejoins with the SAME persisted token (the server hands out a new id)",
+  );
+
+  // The fresh identity renders as a new client.
+  deliver(page.socket, page.sandbox, events.joined, {
+    id: 2,
+    token: "t".repeat(48),
+    recovered: false,
+  });
+  assert.match(page.document.getElementById("p-meta").textContent, /Client 2/);
+});
+
+test("performer page: the leave button ignores a second tap once exited", () => {
+  const page = loadPage("performer.js");
+  const events = page.sandbox.PNDS.events;
+
+  deliver(page.socket, page.sandbox, events.joined, {
+    id: 1,
+    token: "t".repeat(48),
+    recovered: false,
+  });
+
+  click(page.document.getElementById("b-leave"));
+  click(page.document.getElementById("b-leave"));
+
+  assert.equal(
+    page.socket.emitted.filter(([event]) => event === events.leave).length,
+    1,
+  );
+  assert.equal(page.socket.closes, 0, "nothing closed — no disconnect has arrived");
+});
+
+// ------------------------------------------------------------
+// Monitor page — the site-level local event line (issue #10)
+// ------------------------------------------------------------
+
+test("monitor page: the local panel logs a voluntary exit under the cards", () => {
+  const page = loadPage("monitor.js");
+
+  const state = sampleState();
+
+  state.local.events = [
+    { type: "left", client: 2, at: 1, agoMs: 3000 },
+    { type: "left", client: 3, at: 2, agoMs: 2000 },
+  ];
+  deliver(page.socket, page.sandbox, page.sandbox.PNDS.events.state, state);
+
+  const localCards = page.document.getElementById("local-cards");
+  const line = localCards.children[localCards.children.length - 1];
+
+  assert.ok(line.classList.contains("site-events"));
+  assert.equal(line.textContent, "client 3 退出（performer） 2 秒前 · client 2 退出（performer） 3 秒前");
+
+  // English table: same wire event, reworded live. The re-render
+  // rebuilds the line — grab it fresh.
+  for (const handler of page.messageListeners) {
+    handler(LOCALE_MESSAGE("en"));
+  }
+
+  const lineEn = localCards.children[localCards.children.length - 1];
+
+  assert.equal(
+    lineEn.textContent,
+    "client 3 left 2s ago · client 2 left 3s ago",
+  );
 });

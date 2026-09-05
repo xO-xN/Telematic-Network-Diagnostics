@@ -629,6 +629,9 @@ function renderPeerCard(nodeId, peer, own) {
 // The local panel: THIS site's performers, one compact card each —
 // status (LND rules: latency participates on a LAN), metrics, and the
 // per-performer event log (connected / disconnected / reconnected).
+// Site-level events (a performer's voluntary exit deletes the card, so
+// its trail lives here instead) render as one muted line under the
+// cards — issue #10.
 function renderLocal() {
   localCardsEl.textContent = "";
 
@@ -647,12 +650,33 @@ function renderLocal() {
 
   if (entries.length === 0) {
     localCardsEl.append(el("div", "hint", T().monitor.emptyLocal));
-    return;
+  } else {
+    for (const [id, client] of entries) {
+      localCardsEl.append(renderPerformerCard(id, client));
+    }
   }
 
-  for (const [id, client] of entries) {
-    localCardsEl.append(renderPerformerCard(id, client));
+  const siteEvents = local.events || [];
+
+  if (siteEvents.length > 0) {
+    localCardsEl.append(
+      el(
+        "div",
+        "events-line site-events",
+        eventsLineText(siteEvents, localEventLabel),
+      ),
+    );
   }
+}
+
+// The compact "label · ago" trail the performer cards and the
+// site-level line both render from — newest first, last three.
+function eventsLineText(events, labelFor) {
+  return events
+    .slice(-3)
+    .reverse()
+    .map((event) => labelFor(event) + " " + agoText(event.agoMs))
+    .join(" · ");
 }
 
 // The performer card carries no burst/calm marker: its numbers are
@@ -693,16 +717,12 @@ function renderPerformerCard(id, client) {
 
   // Last three events: the full connected → disconnected → reconnected
   // story fits on one compact line.
-  const recent = (client.events || []).slice(-3).reverse();
-
-  if (recent.length > 0) {
+  if ((client.events || []).length > 0) {
     card.append(
       el(
         "div",
         "events-line",
-        recent
-          .map((event) => eventLabel(event.type) + " " + agoText(event.agoMs))
-          .join(" · "),
+        eventsLineText(client.events, (event) => eventLabel(event.type)),
       ),
     );
   }
@@ -789,6 +809,16 @@ function eventLabel(type) {
   return (
     t.events[type] || type.charAt(0).toUpperCase() + type.slice(1)
   );
+}
+
+// Site-level local events name their client: the copy template carries
+// a {0} slot ("client {0} 退出（performer）") filled with the id.
+function localEventLabel(event) {
+  const template = T().events[event.type];
+
+  return template === undefined
+    ? eventLabel(event.type)
+    : fmt(template, [event.client]);
 }
 
 // Event details the server itself words carry a key mapped through

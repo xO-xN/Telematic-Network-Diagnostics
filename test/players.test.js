@@ -72,3 +72,56 @@ test("releaseBySocket returns the assignment and frees it", () => {
   });
   assert.equal(registry.releaseBySocket("a"), null);
 });
+
+// ------------------------------------------------------------
+// Voluntary exit (issue #10): release() is the deletion primitive —
+// the id AND the claim-token mapping go, so the freed client's token
+// rejoins as a brand-new client and the slot counts towards the cap
+// only while it is live.
+// ------------------------------------------------------------
+
+test("release frees the token mapping: the same token rejoins as a NEW client, not a recovery", () => {
+  const registry = new PlayerRegistry({ maxClients: 4 });
+
+  const first = registry.allocate({ socketId: "a", claimToken: null });
+
+  registry.release(1);
+
+  const again = registry.allocate({ socketId: "b", claimToken: first.token });
+
+  assert.equal(again.status, "accepted", "the token is unknown again — not a recovery");
+  assert.equal(again.token, first.token, "the token rebinds to the new client");
+  assert.notEqual(again.id, undefined);
+});
+
+test("release frees the token mapping: a numeric NEW id when the old slot is refilled", () => {
+  const registry = new PlayerRegistry({ maxClients: 4 });
+
+  const p1 = registry.allocate({ socketId: "a", claimToken: null });
+  const p2 = registry.allocate({ socketId: "b", claimToken: null });
+
+  registry.release(p2.id);
+  // A third client takes the freed (smallest) slot…
+  registry.allocate({ socketId: "c", claimToken: null });
+
+  // …so the leaver's own token comes back on a DIFFERENT id.
+  const rejoined = registry.allocate({ socketId: "d", claimToken: p2.token });
+
+  assert.equal(rejoined.status, "accepted");
+  assert.equal(rejoined.id, 3, "a different id than the one it left as (2)");
+});
+
+test("release frees the slot: the cap counts live clients only", () => {
+  const registry = new PlayerRegistry({ maxClients: 1 });
+
+  const first = registry.allocate({ socketId: "a", claimToken: null });
+
+  assert.equal(registry.allocate({ socketId: "b", claimToken: null }).status, "rejected");
+
+  registry.release(first.id);
+
+  const next = registry.allocate({ socketId: "c", claimToken: null });
+
+  assert.equal(next.status, "accepted");
+  assert.equal(next.id, 1);
+});

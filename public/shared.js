@@ -91,13 +91,16 @@
           green: "本地网络良好",
           outsideSafe: "超出安全阈值",
         },
-        // Event-log labels (hub-leg + local-leg event types).
+        // Event-log labels (hub-leg + local-leg event types). `left` is a
+        // SITE-level local event (the performer's card is already gone
+        // when it fires) — {0} fills with the client id.
         events: {
           connected: "已连接",
           disconnected: "已断开",
           reconnected: "已重连",
           stopped: "已停止",
           "connect failed": "连接失败",
+          left: "client {0} 退出（performer）",
         },
         // Event details the server itself words (external diagnostics
         // — socket.io reasons, error messages — stay raw).
@@ -208,6 +211,7 @@
           reconnected: "Reconnected",
           stopped: "Stopped",
           "connect failed": "Connect failed",
+          left: "client {0} left",
         },
         eventDetails: {
           noHubConfigured: "no hub configured",
@@ -272,12 +276,15 @@
 
     // Performer roster cap (id space, PlayerRegistry) and the
     // per-performer event vocabulary (lib/local-leg.js producer,
-    // monitor page consumer).
+    // monitor page consumer). `left` is site-level: a voluntary exit
+    // deletes the card, so the event lives on in the session's
+    // site-wide log instead (issue #10).
     maxClients: 16,
     localEvents: {
       connected: "connected",
       disconnected: "disconnected",
       reconnected: "reconnected",
+      left: "left",
     },
 
     // Derived end-to-end numbers (parent #1): the star topology has no
@@ -342,11 +349,15 @@
       //   rejected: server → page { reason }
       //   probe:    server → page { seq } — answer immediately
       //   ack:      page → server { seq, t0, t1 } (RTT measured server-side)
+      //   leave:    page → server — voluntary exit (issue #10): the
+      //             server deletes the client outright; the page closes
+      //             the socket and shows its "left" cover
       join: "join",
       joined: "joined",
       rejected: "rejected",
       probe: "local:probe",
       ack: "local:ack",
+      leave: "leave",
       // Monitor page ↔ score server:
       //   config: submit the connection form { url, token, room, nodeId }
       //   state:  the full site snapshot — hub leg + peers + local

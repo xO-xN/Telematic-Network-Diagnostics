@@ -9,6 +9,18 @@
 // details ever render here): THIS device's own local-leg verdict, this
 // site's local-leg worst, and this site's hub leg. All three read the
 // same state broadcast the monitor renders.
+//
+// One escape hatch (issue #10): the 退出检测 button — small, low
+// contrast, tucked into the bottom corner, single tap, no confirmation.
+// Tapping it deletes the client on the server (a voluntary exit is not
+// a network fault — the site verdict must stop counting this leg) and
+// flips the page to its "left" cover: the socket is closed (no auto
+// reconnect — lock/unlock keeps the exited state) and the WHOLE page
+// becomes a 重新加入 tap target. The exited state lives in memory only:
+// it never touches localStorage, so a page the system killed rejoins
+// normally on reopen. Rejoining sends the SAME claim token, which the
+// server no longer knows — a deliberate fresh client (new id, new
+// measurement, gray warm-up).
 
 const P = window.PNDS;
 
@@ -19,7 +31,7 @@ app.innerHTML =
   "<h1>Telematic Network Diagnostics</h1>" +
   '<span class="sub">Performer</span>' +
   "</header>" +
-  '<div class="perf">' +
+  '<div class="perf" id="perf">' +
   '<div class="dot-row st-gray" id="row-self">' +
   '<span class="dot"></span>' +
   '<span class="dot-k">本机 This device</span>' +
@@ -37,6 +49,11 @@ app.innerHTML =
   "</div>" +
   '<p class="status" id="p-status">Connecting…</p>' +
   '<p class="meta" id="p-meta"></p>' +
+  "</div>" +
+  '<button class="leave-btn" id="b-leave">退出检测 Leave testing</button>' +
+  '<div class="left-cover hidden" id="left-cover">' +
+  '<p class="left-title">已退出检测 · Left testing</p>' +
+  '<p class="left-hint">重新加入 · Rejoin</p>' +
   "</div>";
 
 const selfRow = document.getElementById("row-self");
@@ -47,8 +64,14 @@ const hubRow = document.getElementById("row-hub");
 const hubWord = document.getElementById("w-hub");
 const statusEl = document.getElementById("p-status");
 const metaEl = document.getElementById("p-meta");
+const perfEl = document.getElementById("perf");
+const leaveButton = document.getElementById("b-leave");
+const coverEl = document.getElementById("left-cover");
 
 let clientId = null;
+// In-memory only (issue #10): the exited state must die with the page —
+// a reopen after the system killed it is a rejoin, not a resumed exit.
+let left = false;
 
 function setStatus(row, word, status) {
   P.setStatus(row, status);
@@ -60,6 +83,28 @@ function setJoined(joined, id) {
     statusEl.textContent = "已连接，测试中… · Connected, testing…";
     metaEl.textContent = "Client " + id + " · 零操作，无需设置";
   } else {
+    clientId = null;
+    statusEl.textContent = "Connecting…";
+    metaEl.textContent = "";
+  }
+}
+
+function setHidden(element, hidden) {
+  if (hidden) {
+    element.classList.add("hidden");
+  } else {
+    element.classList.remove("hidden");
+  }
+}
+
+// The whole page flips to one big tap target: dots gone, socket closed.
+function setLeft(exited) {
+  left = exited;
+  setHidden(perfEl, exited);
+  setHidden(leaveButton, exited);
+  setHidden(coverEl, !exited);
+
+  if (exited) {
     clientId = null;
     statusEl.textContent = "Connecting…";
     metaEl.textContent = "";
@@ -84,20 +129,39 @@ socket.on(P.events.rejected, (data) => {
 
 socket.on("connect", () => {
   // Fires on first connect and after every reconnect: (re)join with the
-  // persisted token so the server hands back the same client id.
+  // persisted token so the server hands back the same client id. Never
+  // while exited — the socket stays closed there, and rejoining is the
+  // cover tap's job alone.
+  if (left) {
+    return;
+  }
+
   socket.emit(P.events.join, {
     token: localStorage.getItem(P.storageKeys.performerToken) || null,
   });
 });
 
 socket.on("disconnect", () => {
+  if (left) {
+    // The server kicked the socket once it had processed the leave
+    // (the authoritative teardown — the page cannot close race-free
+    // right after emitting). Any disconnect while exited ends the same
+    // way: stop reconnecting.
+    socket.close();
+    return;
+  }
+
   setJoined(false);
 });
 
 // The three dots: this device's own local-leg card, this site's local-leg
 // worst and this site's hub-leg quality, straight from the state
-// broadcast. Nothing cross-site.
+// broadcast. Nothing cross-site. Nothing at all once exited.
 socket.on(P.events.state, (state) => {
+  if (left) {
+    return;
+  }
+
   const local = state && state.local ? state.local : null;
   const hub = state && state.leg ? state.leg.status : null;
   const me =
@@ -124,4 +188,40 @@ socket.on(P.events.probe, (payload) => {
   });
 });
 
+// 退出检测: single tap, straight out. The page never closes the
+// socket itself in the same tick — a close racing the leave packet's
+// flush could drop the delete. The server kicks the connection once
+// it has processed the leave (the disconnect handler closes for
+// good); the fallback below only covers a leave that never reached
+// the server (emitted during a transport drop), so the exited page
+// can not sit on a reconnecting socket forever.
+const LEAVE_CLOSE_FALLBACK_MS = 3000;
+
+leaveButton.addEventListener("click", () => {
+  if (left) {
+    return;
+  }
+
+  socket.emit(P.events.leave);
+  setLeft(true);
+  setTimeout(() => {
+    if (left) {
+      socket.close();
+    }
+  }, LEAVE_CLOSE_FALLBACK_MS);
+});
+
+// 重新加入: the whole cover is the button. Reopening the socket fires
+// "connect", which joins with the SAME persisted token — unknown to
+// the server now, so it arrives as a fresh client.
+coverEl.addEventListener("click", () => {
+  if (!left) {
+    return;
+  }
+
+  setLeft(false);
+  socket.open();
+});
+
+setLeft(false);
 setJoined(false);

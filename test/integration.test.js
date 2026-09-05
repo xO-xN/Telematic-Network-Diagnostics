@@ -501,6 +501,125 @@ test("local leg: join → auto-probed → green → disconnect red → token rec
 });
 
 // ------------------------------------------------------------
+// Performer voluntary exit end to end (issue #10): the phone taps
+// 退出检测 and the server DELETES the client — no red card, no drag
+// on the site verdict (a site whose only performer left reads exactly
+// like one no performer ever joined), the slot and the claim-token
+// mapping are freed, and a rejoin with the OLD token is a brand-new
+// client: fresh id (numerically different once its old slot is
+// refilled), fresh measurement through gray warm-up, no inherited
+// history. The disconnect → Red default is untouched — that is the
+// test above.
+// ------------------------------------------------------------
+
+test("local leg: voluntary leave — deleted card, freed slot, old token rejoins as a new client", async (t) => {
+  await assertPortsFree([6868, 6869]);
+
+  const server = spawn(process.execPath, ["server.js"], {
+    cwd: PROJECT_ROOT,
+    stdio: "ignore",
+  });
+  t.after(async () => stopProcess(server));
+
+  await waitForHealthReady();
+
+  const monitor = await connectMonitor();
+  t.after(() => monitor.close());
+
+  // --- the sole performer leaves: the site reads "never had one" ---
+  const solo = await connectPerformerAt(PERFORMER_URL);
+  t.after(() => solo.socket.close());
+
+  await waitForState(monitor, (state) => state.local.clients["1"]);
+
+  // No manual close: the SERVER kicks the socket once it has processed
+  // the leave (the page-side contract too — see performer.js).
+  solo.socket.emit(EVENTS.leave);
+
+  const emptied = await waitForState(
+    monitor,
+    (state) =>
+      Object.keys(state.local.clients).length === 0 &&
+      state.local.status === null &&
+      state.local.performers === 0,
+    8000,
+  );
+
+  const leftEvents = emptied.local.events.filter(
+    (event) => event.type === "left",
+  );
+
+  assert.equal(leftEvents.length, 1, "one site-level exit event");
+  assert.equal(leftEvents[0].client, 1);
+  assert.equal(
+    emptied.local.events.filter((event) => event.type === "disconnected").length,
+    0,
+    "a voluntary exit is not a disconnect — no red trail",
+  );
+
+  // --- the freed slot and token: three performers, the middle one
+  // leaves, a fresh client takes its slot, and the leaver's OLD token
+  // comes back on a DIFFERENT id as a brand-new client ---
+  const p1 = await connectPerformerAt(PERFORMER_URL);
+  t.after(() => p1.socket.close());
+  const p2 = await connectPerformerAt(PERFORMER_URL);
+  t.after(() => p2.socket.close());
+  const p3 = await connectPerformerAt(PERFORMER_URL);
+  t.after(() => p3.socket.close());
+
+  assert.equal(p1.joined.id, 1);
+  assert.equal(p2.joined.id, 2);
+  assert.equal(p3.joined.id, 3);
+
+  p2.socket.emit(EVENTS.leave);
+
+  await waitForState(
+    monitor,
+    (state) =>
+      state.local.clients["1"] &&
+      state.local.clients["3"] &&
+      !state.local.clients["2"],
+    8000,
+  );
+
+  const p4 = await connectPerformerAt(PERFORMER_URL);
+  t.after(() => p4.socket.close());
+
+  assert.equal(p4.joined.id, 2, "the freed slot is reused (cap semantics intact)");
+
+  const p2back = await connectPerformerAt(PERFORMER_URL, p2.joined.token);
+  t.after(() => p2back.socket.close());
+
+  assert.equal(p2back.joined.id, 4, "the old token gets a DIFFERENT id");
+  assert.equal(p2back.joined.recovered, false, "not a recovery — a new client");
+  assert.equal(p2back.joined.token, p2.joined.token, "the token itself persists");
+
+  const fresh = await waitForState(
+    monitor,
+    (state) =>
+      state.local.clients["4"] &&
+      state.local.clients["4"].connected &&
+      state.local.clients["4"].events.length === 1 &&
+      state.local.clients["4"].events[0].type === "connected",
+    8000,
+  );
+
+  assert.equal(
+    fresh.local.clients["4"].status,
+    "gray",
+    "fresh measurement — gray warm-up, no inherited history",
+  );
+  assert.equal(fresh.local.performers, 4);
+
+  // --- the performer page wiring (source-level): leave button + the
+  // full-page rejoin cover ---
+  const performerJs = await (await fetch(`${PERFORMER_URL}/performer.js`)).text();
+  assert.match(performerJs, /P\.events\.leave/, "emits the leave event");
+  assert.match(performerJs, /left-cover/, "the exited cover");
+  assert.match(performerJs, /socket\.open\(\)/, "the cover tap rejoins");
+});
+
+// ------------------------------------------------------------
 // Flower view end to end (issue #4): two project instances + hub.
 // The second instance is a real copy of the project with its own
 // manifest ports — literally "two deployments on one machine", the
@@ -702,6 +821,32 @@ test("flower view: two instances see each other, overall follows the worst node"
       state.overall &&
       state.overall.status === "green",
     25000,
+  );
+
+  // --- #10: the performer VOLUNTARILY leaves — the deletion reaches
+  // every monitor through the hub: B's local leg reads "no data"
+  // again (null, not a lingering red) and the overall verdict drops
+  // the local attribution ---
+  performerBack.socket.emit(EVENTS.leave);
+
+  const exited = await waitForState(
+    monitorA,
+    (state) =>
+      state.leg &&
+      state.leg.peers["site-b"] &&
+      state.leg.peers["site-b"].connected &&
+      state.leg.peers["site-b"].local &&
+      state.leg.peers["site-b"].local.status === null &&
+      state.leg.peers["site-b"].local.performers === 0 &&
+      state.overall &&
+      state.overall.status === "green",
+    25000,
+  );
+
+  assert.equal(
+    exited.overall.attributionLeg,
+    "hub",
+    "no local leg counts anymore — the exit un-dragged the verdict",
   );
 
   // --- one side drops: the other side's overall turns red, attributed ---

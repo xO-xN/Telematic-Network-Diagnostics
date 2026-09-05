@@ -45,6 +45,16 @@ audio mode `none` only.
   Per-performer cards with status, metrics and event log; a dropped
   performer is Red at once and the site's worst local status flows to
   every monitor.
+- **Voluntary exit** — a small 退出检测 / Leave testing button in the
+  performer page's bottom corner (single tap, no confirmation) deletes
+  the client outright: the card disappears, the site verdict — and
+  every remote monitor's, via the hub — stops counting that leg, the
+  exit is logged ("client N 退出（performer）"), and the slot and
+  claim-token mapping are freed, so rejoining with the same token is a
+  brand-new client (new id, fresh measurement). The exited page
+  becomes one big 重新加入 / Rejoin tap target and never auto-rejoins;
+  a page the system killed still rejoins on reopen. The disconnect →
+  Red default is untouched.
 - **Derived end-to-end numbers** — the star topology has no direct
   site-to-site link, so the numbers are sums of measured segments,
   never a third measurement layer: site pair = two hub-leg p50s;
@@ -52,7 +62,9 @@ audio mode `none` only.
   composition formula; null while any segment is unmeasured).
 - **Performer page** — LND-minimal: "已连接，测试中…" plus exactly two
   site-level dots (this site's local leg, this site's hub leg), no
-  cross-site details.
+  cross-site details; the low-key 退出检测 / Leave testing button in
+  the bottom corner swaps the whole page for a 重新加入 / Rejoin cover
+  (issue #10).
 - **A deployable hub** — token auth (timing-safe comparison), rooms,
   relay with sender stamps, systemd unit + Caddy/wss guide.
 - **Theme & locale following** — inside PNDS App (theme ≥ v1.2.3,
@@ -162,7 +174,10 @@ formula never sums a guess.
 reconnect with reasons (a wrong URL or token shows up here as "connect
 failed"); each performer card carries its connected / disconnected /
 reconnected timeline. A performer whose Wi-Fi drops is Red at once and
-stays on the card until it reconnects (claim token recovers the id).
+stays on the card until it reconnects (claim token recovers the id). A
+voluntary exit (退出检测) instead deletes the card at once and logs
+"client N 退出（performer）" in the local panel — the site verdict stops
+counting that leg, here and on every remote monitor.
 
 ### Hub connection (env contract — frozen, App v1.3.0)
 
@@ -247,11 +262,20 @@ SuperCollider：工程仅以 audio mode `none` 运行。
 - **本地腿测量**——演奏者手机扫码即加入（零操作；claim token 保证重连
   找回身份），以相同相位节奏与 LND 阈值自动受测。逐演奏者卡片含状态、
   指标与事件日志；掉线立即变红，站点最差本地状态流到每个 monitor。
+- **主动退出**——演奏者页底部角落一枚低调的「退出检测 / Leave
+  testing」小按钮（单击直出、无确认）：客户端被彻底删除——卡片消失，
+  本站判定（经 hub 广播后包括所有远端 monitor）不再计入该腿，事件日志
+  记「client N 退出（performer）」，槽位与 claim-token 映射随之释放，
+  持旧 token 再加入即全新客户端（新 id、全新测量）。退出后的整页变成
+  「重新加入 / Rejoin」点击热区，绝不自动重连；被系统杀掉后重开则正常
+  自动加入。掉线→红的默认行为零改动。
 - **推导端到端数字**——星型拓扑没有站点直连，数字是实测段之和，绝非
   第三层测量：站点对 = 两条 hub 腿 p50；演奏者对 = 本地 + hub + hub +
   本地（大数字 + 小字构成式；任一段未测出即为空）。
 - **演奏者页**——LND 极简："已连接，测试中…" + 恰好两个站点级状态点
-  （本站本地腿、本站 hub 腿），无任何跨站细节。
+  （本站本地腿、本站 hub 腿），无任何跨站细节；底部角落的
+  「退出检测 / Leave testing」小按钮退出后，整页变为
+  「重新加入 / Rejoin」热区（issue #10）。
 - **可部署 hub**——token 鉴权（timing-safe 比较）、房间、带发送方戳的
   中继、systemd unit + Caddy/wss 指南。
 - **主题与语言跟随**——在 PNDS App 中运行时（主题 ≥ v1.2.3、语言 ≥
@@ -347,7 +371,10 @@ hub + hub + 本地（本地段取该站在线演奏者中最差的 p50）。任�
 **事件日志**：hub 腿日志记录 connect / disconnect / reconnect 及原因
 （错误的 URL 或 token 在这里立刻显示为 "connect failed"）；每张演奏者
 卡片带自己的 connected / disconnected / reconnected 时间线。Wi-Fi 掉线
-的演奏者立即变红并留在卡片上，直到重连（claim token 找回身份）。
+的演奏者立即变红并留在卡片上，直到重连（claim token 找回身份）。主动
+退出（退出检测）则当场删除卡片，并在本地面板记一条
+「client N 退出（performer）」——本站及所有远端 monitor 的判定即不再
+计入该腿。
 
 ### hub 连接（env 契约——已冻结，App v1.3.0）
 

@@ -390,6 +390,17 @@ header .sub {
   width: 225px;
 }
 
+/* Site-level local events (voluntary exits — issue #10): a muted
+ * full-width line under the performer cards; it is the only trace a
+ * deleted card leaves behind. */
+.local-cards .site-events {
+  width: 100%;
+  border-top: 1px solid var(--track);
+  padding-top: 5px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
 /* The local panel's content row: performer cards left, the join QR
  * pinned to the row's end — scanning to join lives where the performer
  * cards are, and the QR's height is absorbed by the cards beside it. */
@@ -612,4 +623,55 @@ header .sub {
 .perf .meta {
   font-size: 12px;
   color: var(--muted);
+}
+
+/* Voluntary exit (issue #10): small, low-contrast, bottom corner —
+ * present but never inviting a tap. */
+.leave-btn {
+  position: fixed;
+  right: 10px;
+  bottom: 8px;
+  font-size: 11px;
+  font-family: inherit;
+  color: var(--muted);
+  background: none;
+  border: none;
+  padding: 10px;
+  cursor: pointer;
+}
+
+/* The exited state: the whole page becomes the rejoin tap target. */
+.left-cover {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: var(--bg);
+  cursor: pointer;
+  text-align: center;
+  padding: 24px;
+}
+
+.left-cover .left-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.left-cover .left-hint {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+/* Deliberately LAST: .hidden must out-rank the display rules above
+ * (.perf, .left-cover — same specificity, source order decides). */
+.hidden {
+  display: none;
 }

@@ -459,6 +459,82 @@ test("LocalSession: a DISCONNECTED performer's Red counts in the site summary (t
   assert.equal(session.siteSummary().performers, 1, "only the online one performs");
 });
 
+// ------------------------------------------------------------
+// Voluntary exit (issue #10): removeClient is the DELETION path — the
+// mirror of disconnectClient → Red above. The card, its metrics and
+// its event log all go; the site summary stops counting the leg; the
+// exit itself lands in the site-level log.
+// ------------------------------------------------------------
+
+test("LocalSession: removeClient stops the deleted performer from dragging the site summary", () => {
+  const session = new LocalSession();
+  session.setPhase("burst");
+
+  session.addClient(1);
+  session.addClient(2);
+
+  session.recordAck(1, 2);
+  session.recordAck(1, 3);
+  session.cycleAll();
+  session.cycleAll();
+
+  // The #5 shape: client 2 dropped, its Red card drags the site Red.
+  session.disconnectClient(2, 1000);
+  assert.equal(session.siteSummary().status, STATUS.RED);
+
+  // The #10 mirror: a voluntary exit DELETES the card — client 2 stops
+  // existing instead of lingering as Red.
+  session.removeClient(2, 1500);
+
+  const snap = session.snapshot();
+
+  assert.equal(snap.clients["2"], undefined, "the card is gone, not red");
+  assert.equal(snap.status, STATUS.GREEN, "the summary no longer counts the leg");
+  assert.equal(snap.performers, 1);
+});
+
+test("LocalSession: removing the last performer returns the site to the never-joined state", () => {
+  const session = new LocalSession();
+  session.setPhase("burst");
+
+  session.addClient(1);
+  session.recordAck(1, 2);
+  session.recordAck(1, 3);
+  session.cycleAll();
+  session.cycleAll();
+  assert.equal(session.siteSummary().status, STATUS.GREEN);
+
+  session.removeClient(1, 2000);
+
+  assert.deepEqual(
+    session.siteSummary(),
+    { status: null, p50: null, performers: 0 },
+    "identical to a site no performer ever joined",
+  );
+  assert.deepEqual(session.snapshot().clients, {});
+});
+
+test("LocalSession: removeClient logs the exit site-level, with agoMs in the snapshot", () => {
+  const session = new LocalSession();
+
+  session.addClient(1, 1000);
+  session.removeClient(1, 5000);
+
+  const snap = session.snapshot(6000);
+
+  assert.deepEqual(snap.events, [
+    { type: "left", client: 1, at: 5000, agoMs: 1000 },
+  ]);
+});
+
+test("LocalSession: removeClient of an unknown id pushes no event", () => {
+  const session = new LocalSession();
+
+  session.removeClient(7, 1000);
+
+  assert.deepEqual(session.snapshot(1000).events, []);
+});
+
 test("LocalSession: siteSummary — empty session, p50 = worst online median", () => {
   const session = new LocalSession();
 
