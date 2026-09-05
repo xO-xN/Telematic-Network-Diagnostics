@@ -447,16 +447,12 @@ function stateSnapshot() {
 
   return {
     configured: Boolean(hubLeg),
-    config: activeConfig
-      ? {
-          url: activeConfig.url,
-          room: activeConfig.room,
-          nodeId: activeConfig.nodeId,
-          tokenSet: Boolean(activeConfig.token),
-        }
-      : null,
-    // The token is never echoed back; the env channel carries it once
-    // for the form prefill (LAN trust model, same as the form itself).
+    // The live config verbatim (issue #12), token included: the
+    // monitor's dirty-check baseline for the connect button, so a
+    // page refresh or another device reads the server's truth, not a
+    // page-local memory. The token rides exactly like the env token
+    // below — LAN trust model, no new exposure class.
+    activeConfig: activeConfig ? { ...activeConfig } : null,
     env: envHub,
     leg,
     local: localSnapshot,

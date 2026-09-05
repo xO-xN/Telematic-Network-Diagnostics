@@ -243,9 +243,13 @@ test("hub leg: env auto-connect, live stats, burst, disconnect/reconnect, form c
     (state) => state.configured && state.leg && state.leg.connected,
   );
 
-  assert.equal(connected.config.room, "rehearsal");
-  assert.equal(connected.config.nodeId, "site-test");
-  assert.equal(connected.config.tokenSet, true);
+  assert.equal(connected.config, undefined, "the old token-less config field is gone (#12)");
+  assert.deepEqual(connected.activeConfig, {
+    url: `http://127.0.0.1:${hubPort}`,
+    token: HUB_TOKEN,
+    room: "rehearsal",
+    nodeId: "site-test",
+  }, "the live config rides the snapshot verbatim — the connect button's dirty-check baseline");
   assert.ok(connected.env.hubUrl.includes(`:${hubPort}`), "env is delivered for the form prefill");
   assert.ok(
     connected.leg.events.some((event) => event.type === "connected"),
@@ -346,10 +350,42 @@ test("hub leg: env auto-connect, live stats, burst, disconnect/reconnect, form c
   const renamed = await waitForState(
     monitor,
     (state) =>
-      state.config && state.config.nodeId === "site-renamed" && state.leg.connected,
+      state.activeConfig &&
+      state.activeConfig.nodeId === "site-renamed" &&
+      state.leg.connected,
   );
 
-  assert.equal(renamed.config.nodeId, "site-renamed");
+  assert.equal(renamed.activeConfig.nodeId, "site-renamed");
+
+  // --- an IDENTICAL resubmission is a server no-op (#12 keeps this
+  // verbatim): the live measurement and its window survive untouched —
+  // no teardown, no reconnect, no event ---
+  const samplesBeforeNoop = renamed.leg.summary.samples;
+  const reconnectsBefore = renamed.leg.summary.reconnects;
+
+  for (let i = 0; i < 2; i += 1) {
+    monitor.emit(EVENTS.hubConfig, {
+      url: `http://127.0.0.1:${hubPort}`,
+      token: HUB_TOKEN,
+      room: "rehearsal",
+      nodeId: "site-renamed",
+    });
+  }
+
+  const unaffected = await waitForState(
+    monitor,
+    (state) =>
+      state.leg.connected &&
+      state.leg.summary.samples >= samplesBeforeNoop + 10,
+    15000,
+  );
+
+  assert.equal(
+    unaffected.leg.summary.reconnects,
+    reconnectsBefore,
+    "identical config → the leg was never rebuilt",
+  );
+  assert.equal(unaffected.activeConfig.nodeId, "site-renamed");
 
   // --- the monitor page itself: persistence + env prefill wiring ---
   const monitorHtml = await (await fetch(`${MONITOR_URL}/`)).text();
@@ -360,6 +396,7 @@ test("hub leg: env auto-connect, live stats, burst, disconnect/reconnect, form c
   assert.match(monitorJs, /storageKeys/, "storage key comes from shared.js");
   assert.match(monitorJs, /autoConfig/, "auto-start uses the loaded config");
   assert.match(monitorJs, /state\.env/, "env prefill is wired");
+  assert.match(monitorJs, /activeConfig/, "the connect button dirty-checks against the server's live config (#12)");
 });
 
 // ------------------------------------------------------------
@@ -391,6 +428,7 @@ test("local leg: join → auto-probed → green → disconnect red → token rec
   );
 
   assert.equal(idle.overall, null, "no flower verdict without a hub");
+  assert.equal(idle.activeConfig, null, "no live config to dirty-check against (#12)");
   assert.equal(idle.local.status, null, "no performer yet → no local data");
   assert.equal(idle.local.performers, 0);
   assert.deepEqual(idle.local.clients, {});
@@ -754,7 +792,7 @@ test("flower view: two instances see each other, overall follows the worst node"
   assert.equal(stateA.leg.peers["site-b"].local.performers, 0, "no performers yet");
   assert.equal(stateA.leg.peers["site-b"].local.status, null, "no local data until a performer joins");
   assert.equal(stateA.local.status, null, "own site: no performer either");
-  assert.equal(stateA.overall.attributionNodeId, stateA.config.nodeId);
+  assert.equal(stateA.overall.attributionNodeId, stateA.activeConfig.nodeId);
   assert.equal(stateA.overall.attributionLeg, "hub");
 
   // --- #5 in the flower: a performer joins site B — A sees B's local

@@ -123,7 +123,9 @@ different NATs, phones on each site's Wi-Fi.
    run from source (`npm install && npm start`). Open the monitor
    `http://<LAN-IP>:6869/`, fill the connection form — hub URL
    (`http://<VPS-IP>:4000`, or `wss://hub.example.com` behind Caddy),
-   token, room, node name `site-a` — and click 连接. Or skip the form:
+   token, room, node name `site-a` — and click 连接. The button is a
+   four-state machine checked against the server's live config:
+   连接 / 连接中… / 已连接 / 重新连接 (issue #12). Or skip the form:
    set the `PNDS_HUB_*` environment variables (below) and the server
    connects at boot.
 
@@ -329,7 +331,9 @@ npm start        # 演奏者页 http://<局域网IP>:6868/，监视端 :6869/
    （`npm install && npm start`）。打开 monitor
    `http://<局域网IP>:6869/`，填连接表单——hub 地址
    （`http://<VPS-IP>:4000`，或 Caddy 后的 `wss://hub.example.com`）、
-   token、room、节点名 `site-a`——点连接。也可以跳过表单：设好下面的
+   token、room、节点名 `site-a`——点连接。按钮是以服务端生效配置为
+   基准的四态状态机：连接 / 连接中… / 已连接 / 重新连接
+   （issue #12）。也可以跳过表单：设好下面的
    `PNDS_HUB_*` 环境变量，服务器开机即连。
 
 3. **同样启动站点 B**，节点名 `site-b`，token 与 room 相同。每个站点

@@ -117,6 +117,12 @@
           formNode: "节点名",
           formNodePlaceholder: "站点名",
           connect: "连接",
+          // The connect button's other three states (#12): rendered
+          // from server truth (leg.connected / everConnected) plus the
+          // form-vs-activeConfig dirty check.
+          connecting: "连接中…",
+          connected: "已连接",
+          reconnect: "重新连接",
           formHint:
             "表单保存在浏览器 localStorage，重开无需重填；App 注入的 env（PNDS_HUB_URL 等）会作为预填默认值。",
           starHint:
@@ -225,6 +231,9 @@
           formNode: "Node name",
           formNodePlaceholder: "site name",
           connect: "Connect",
+          connecting: "Connecting…",
+          connected: "Connected",
+          reconnect: "Reconnect",
           formHint:
             "The form persists in the browser's localStorage — no re-typing on reopen; env injected by the App (PNDS_HUB_URL, …) prefills the defaults.",
           starHint:

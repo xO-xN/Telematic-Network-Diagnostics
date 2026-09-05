@@ -243,6 +243,58 @@ function submitConfig(save) {
 }
 
 // ------------------------------------------------------------
+// Connect button state machine (#12)
+// ------------------------------------------------------------
+
+// The form-vs-live-config dirty check: trimmed values, exact string
+// compare — case-sensitive, no scheme/host normalization (a different
+// spelling is a different config). The one asymmetry is the two
+// server-applied defaults: an empty room means "default", and an empty
+// node name means "the server picks" — both compare clean against
+// whatever is actually live.
+function formMatchesActive(active) {
+  if (!active) {
+    return false;
+  }
+
+  return (
+    urlInput.value.trim() === active.url &&
+    tokenInput.value.trim() === active.token &&
+    (roomInput.value.trim() === active.room ||
+      (roomInput.value.trim() === "" && active.room === P.defaultRoom)) &&
+    (nodeInput.value.trim() === active.nodeId ||
+      nodeInput.value.trim() === "")
+  );
+}
+
+// Four states, from server truth alone (a page refresh or another
+// device renders the same button): 未连接 → 连接; submitted → first
+// connect → 连接中…; connected && form == activeConfig → 已连接;
+// connected && form ≠ activeConfig → 重新连接. Connected means the
+// TRANSPORT is up — a yellow or red metric never un-words「已连接」
+// (connection state ≠ health state).
+function renderConnectButton() {
+  const m = T().monitor;
+  const leg = state && state.leg ? state.leg : null;
+
+  let label = m.connect;
+  let disabled = false;
+
+  if (leg && !leg.connected && !leg.everConnected) {
+    label = m.connecting;
+    disabled = true;
+  } else if (leg && leg.connected && formMatchesActive(state.activeConfig)) {
+    label = m.connected;
+    disabled = true;
+  } else if (leg && leg.connected) {
+    label = m.reconnect;
+  }
+
+  connectButton.textContent = label;
+  connectButton.disabled = disabled;
+}
+
+// ------------------------------------------------------------
 // Rendering
 // ------------------------------------------------------------
 
@@ -258,7 +310,10 @@ function localState() {
 }
 
 function ownName() {
-  return (state && state.config && state.config.nodeId) || T().monitor.ownFallback;
+  return (
+    (state && state.activeConfig && state.activeConfig.nodeId) ||
+    T().monitor.ownFallback
+  );
 }
 
 function sortedPeers(info) {
@@ -287,7 +342,7 @@ function render() {
   chromeEls.formRoom.textContent = m.formRoom;
   chromeEls.formNode.textContent = m.formNode;
   nodeInput.setAttribute("placeholder", m.formNodePlaceholder);
-  connectButton.textContent = m.connect;
+  renderConnectButton();
   chromeEls.formHint.textContent = m.formHint;
   chromeEls.starHint.textContent = m.starHint;
   chromeEls.localTitle.textContent = m.localTitle;

@@ -181,10 +181,16 @@ function deliver(socket, sandbox, event, payload) {
 function sampleState() {
   return {
     configured: true,
-    config: { url: "http://hub", room: "default", nodeId: "site-a", tokenSet: true },
+    activeConfig: {
+      url: "http://hub",
+      token: "hub-token",
+      room: "default",
+      nodeId: "site-a",
+    },
     env: { hubUrl: "", hubToken: "", hubRoom: "", nodeId: "" },
     leg: {
       connected: true,
+      everConnected: true,
       probing: "calm",
       status: "green",
       reason: "linkGood",
@@ -363,6 +369,123 @@ test("monitor page: a saved form wins over the env prefill", () => {
 });
 
 // ------------------------------------------------------------
+// Monitor page — connect button state machine (issue #12)
+// ------------------------------------------------------------
+
+test("monitor page: connect button walks the four states from server truth", () => {
+  const page = loadPage("monitor.js");
+  const events = page.sandbox.PNDS.events;
+  const button = page.document.getElementById("b-connect");
+  const setForm = (url, token, room, node) => {
+    page.document.getElementById("f-url").value = url;
+    page.document.getElementById("f-token").value = token;
+    page.document.getElementById("f-room").value = room;
+    page.document.getElementById("f-node").value = node;
+  };
+
+  // Before any state: nothing configured → 连接, clickable.
+  assert.equal(button.textContent, "连接");
+  assert.equal(button.disabled, false);
+
+  // Submitted → first connect still pending → 连接中…, disabled. The
+  // flag is leg.everConnected on the wire — not page memory.
+  const pending = sampleState();
+
+  pending.leg.connected = false;
+  pending.leg.everConnected = false;
+  deliver(page.socket, page.sandbox, events.state, pending);
+
+  assert.equal(button.textContent, "连接中…");
+  assert.equal(button.disabled, true);
+
+  // Connected but the form (still empty) ≠ activeConfig → 重新连接.
+  deliver(page.socket, page.sandbox, events.state, sampleState());
+
+  assert.equal(button.textContent, "重新连接");
+  assert.equal(button.disabled, false);
+
+  // The form is edited to MATCH the live config → 已连接, disabled.
+  // The empty room counts clean against the server's "default".
+  setForm("http://hub", "hub-token", "", "site-a");
+  deliver(page.socket, page.sandbox, events.state, sampleState());
+
+  assert.equal(button.textContent, "已连接");
+  assert.equal(button.disabled, true);
+
+  // One field drifts → 重新连接 again (exact compare: one character
+  // of node name is a different config).
+  setForm("http://hub", "hub-token", "", "site-B");
+  deliver(page.socket, page.sandbox, events.state, sampleState());
+
+  assert.equal(button.textContent, "重新连接");
+  assert.equal(button.disabled, false);
+
+  // The transport DROPS after having been connected → 连接, clickable.
+  const dropped = sampleState();
+
+  dropped.leg.connected = false;
+  deliver(page.socket, page.sandbox, events.state, dropped);
+
+  assert.equal(button.textContent, "连接");
+  assert.equal(button.disabled, false);
+});
+
+test("monitor page: a red metric never un-words 已连接 — transport ≠ health", () => {
+  const page = loadPage("monitor.js");
+  const events = page.sandbox.PNDS.events;
+  const button = page.document.getElementById("b-connect");
+
+  // The env scenario: the env values prefill the form AND are what the
+  // server reports live (room left empty — the server's "default"
+  // counts clean). Same shape as a page refresh or another device:
+  // state alone decides, nothing was ever clicked.
+  const state = sampleState();
+
+  state.env = {
+    hubUrl: "http://hub",
+    hubToken: "hub-token",
+    hubRoom: "",
+    nodeId: "site-a",
+  };
+  state.leg.status = "red";
+  state.leg.reason = "jitterRed";
+  deliver(page.socket, page.sandbox, events.state, state);
+
+  assert.equal(button.textContent, "已连接");
+  assert.equal(button.disabled, true);
+  assert.equal(
+    page.socket.emitted.filter(([event]) => event === "hub:config").length,
+    1,
+    "the env config auto-submitted once",
+  );
+
+  // The English table words the same states.
+  for (const handler of page.messageListeners) {
+    handler(LOCALE_MESSAGE("en"));
+  }
+
+  assert.equal(button.textContent, "Connected");
+  assert.equal(button.disabled, true);
+});
+
+test("monitor page: no hub configured — the button stays 连接 with no active config", () => {
+  const page = loadPage("monitor.js");
+  const events = page.sandbox.PNDS.events;
+  const button = page.document.getElementById("b-connect");
+
+  const idle = sampleState();
+
+  idle.configured = false;
+  idle.activeConfig = null;
+  idle.leg = null;
+  idle.overall = null;
+  deliver(page.socket, page.sandbox, events.state, idle);
+
+  assert.equal(button.textContent, "连接");
+  assert.equal(button.disabled, false);
+});
+
+// ------------------------------------------------------------
 // Monitor page — locale following (the App language bridge)
 // ------------------------------------------------------------
 
@@ -377,7 +500,7 @@ test("monitor page: renders Chinese by default, before any bridge traffic", () =
 
   assert.equal(page.document.getElementById("sub-label").textContent, "监视端 — 全网视图");
   assert.equal(page.document.getElementById("form-title").textContent, "Hub 连接");
-  assert.equal(page.document.getElementById("b-connect").textContent, "连接");
+  assert.equal(page.document.getElementById("b-connect").textContent, "重新连接");
   assert.equal(page.document.getElementById("banner-copy").textContent, "不适宜演出");
   assert.equal(
     page.document.getElementById("banner-attribution").textContent,
@@ -404,7 +527,7 @@ test("monitor page: a locale message re-renders the whole console live", () => {
 
   assert.equal(page.document.getElementById("sub-label").textContent, "Monitor — flower view");
   assert.equal(page.document.getElementById("form-title").textContent, "Hub connection");
-  assert.equal(page.document.getElementById("b-connect").textContent, "Connect");
+  assert.equal(page.document.getElementById("b-connect").textContent, "Reconnect");
   assert.equal(
     page.document.getElementById("banner-copy").textContent,
     "Not suitable for performance",
@@ -427,7 +550,7 @@ test("monitor page: a locale message re-renders the whole console live", () => {
     handler({ data: null });
   }
 
-  assert.equal(page.document.getElementById("b-connect").textContent, "Connect");
+  assert.equal(page.document.getElementById("b-connect").textContent, "Reconnect");
   assert.equal(page.sandbox.PNDS_LOCALE.current(), "en");
 
   // Back to Chinese (a language switch in the other direction).
@@ -435,7 +558,7 @@ test("monitor page: a locale message re-renders the whole console live", () => {
     handler(LOCALE_MESSAGE("zh-CN"));
   }
 
-  assert.equal(page.document.getElementById("b-connect").textContent, "连接");
+  assert.equal(page.document.getElementById("b-connect").textContent, "重新连接");
 });
 
 test("monitor page: ?lang= seeds the first frame before any message", () => {
@@ -443,7 +566,7 @@ test("monitor page: ?lang= seeds the first frame before any message", () => {
 
   deliver(page.socket, page.sandbox, page.sandbox.PNDS.events.state, sampleState());
 
-  assert.equal(page.document.getElementById("b-connect").textContent, "Connect");
+  assert.equal(page.document.getElementById("b-connect").textContent, "Reconnect");
   assert.equal(page.document.documentElement.lang, "en");
 });
 
