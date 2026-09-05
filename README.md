@@ -55,6 +55,15 @@ audio mode `none` only.
   becomes one big 重新加入 / Rejoin tap target and never auto-rejoins;
   a page the system killed still rejoins on reopen. The disconnect →
   Red default is untouched.
+- **Monitor removal** — every performer card on the monitor carries an
+  icon-only「x」(single tap, no confirmation), online cards and dead Red
+  cards alike. The server runs the same deletion as a voluntary exit
+  and logs "client N 移除（monitor）"; an online phone is notified
+  (`removed`) before its socket is kicked and lands in a
+  已被移出检测 / Removed from testing cover — same full-page
+  重新加入 / Rejoin as a voluntary exit, whose tap rejoins as a
+  brand-new client. Every open monitor converges on the corrected
+  verdict at once.
 - **Derived end-to-end numbers** — the star topology has no direct
   site-to-site link, so the numbers are sums of measured segments,
   never a third measurement layer: site pair = two hub-leg p50s;
@@ -64,7 +73,8 @@ audio mode `none` only.
   site-level dots (this site's local leg, this site's hub leg), no
   cross-site details; the low-key 退出检测 / Leave testing button in
   the bottom corner swaps the whole page for a 重新加入 / Rejoin cover
-  (issue #10).
+  (issue #10) — a monitor-side removal lands in the same cover worded
+  已被移出检测 / Removed from testing (issue #13).
 - **A deployable hub** — token auth (timing-safe comparison), rooms,
   relay with sender stamps, systemd unit + Caddy/wss guide.
 - **Theme & locale following** — inside PNDS App (theme ≥ v1.2.3,
@@ -179,7 +189,10 @@ reconnected timeline. A performer whose Wi-Fi drops is Red at once and
 stays on the card until it reconnects (claim token recovers the id). A
 voluntary exit (退出检测) instead deletes the card at once and logs
 "client N 退出（performer）" in the local panel — the site verdict stops
-counting that leg, here and on every remote monitor.
+counting that leg, here and on every remote monitor. The monitor's「x」
+deletes the same way and logs "client N 移除（monitor）"; an online
+phone is told first (`removed`) and shows 已被移出检测 until it taps
+重新加入.
 
 ### Hub connection (env contract — frozen, App v1.3.0)
 
@@ -271,13 +284,20 @@ SuperCollider：工程仅以 audio mode `none` 运行。
   持旧 token 再加入即全新客户端（新 id、全新测量）。退出后的整页变成
   「重新加入 / Rejoin」点击热区，绝不自动重连；被系统杀掉后重开则正常
   自动加入。掉线→红的默认行为零改动。
+- **monitor 移除**——monitor 上每张演奏者卡片带一枚仅图标的「x」（单击
+  直删、无确认），在线卡与断线红卡一视同仁。服务端执行与主动退出相同
+  的删除并记「client N 移除（monitor）」；在线手机先收到 `removed`
+  通知、随后 socket 被断开，整页进入「已被移出检测 / Removed from
+  testing」——与主动退出一致的整页「重新加入 / Rejoin」，点击即以全新
+  客户端回来。所有开着的 monitor 即刻收敛到修正后的判定。
 - **推导端到端数字**——星型拓扑没有站点直连，数字是实测段之和，绝非
   第三层测量：站点对 = 两条 hub 腿 p50；演奏者对 = 本地 + hub + hub +
   本地（大数字 + 小字构成式；任一段未测出即为空）。
 - **演奏者页**——LND 极简："已连接，测试中…" + 恰好两个站点级状态点
   （本站本地腿、本站 hub 腿），无任何跨站细节；底部角落的
   「退出检测 / Leave testing」小按钮退出后，整页变为
-  「重新加入 / Rejoin」热区（issue #10）。
+  「重新加入 / Rejoin」热区（issue #10）——monitor 侧移除进入同一热区，
+  措辞为「已被移出检测 / Removed from testing」（issue #13）。
 - **可部署 hub**——token 鉴权（timing-safe 比较）、房间、带发送方戳的
   中继、systemd unit + Caddy/wss 指南。
 - **主题与语言跟随**——在 PNDS App 中运行时（主题 ≥ v1.2.3、语言 ≥
@@ -378,7 +398,9 @@ hub + hub + 本地（本地段取该站在线演奏者中最差的 p50）。任�
 的演奏者立即变红并留在卡片上，直到重连（claim token 找回身份）。主动
 退出（退出检测）则当场删除卡片，并在本地面板记一条
 「client N 退出（performer）」——本站及所有远端 monitor 的判定即不再
-计入该腿。
+计入该腿。monitor 的「x」以相同方式删除并记
+「client N 移除（monitor）」；在线手机先收到通知（`removed`），显示
+「已被移出检测」直到点击「重新加入」。
 
 ### hub 连接（env 契约——已冻结，App v1.3.0）
 

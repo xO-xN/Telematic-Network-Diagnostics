@@ -91,9 +91,11 @@
           green: "本地网络良好",
           outsideSafe: "超出安全阈值",
         },
-        // Event-log labels (hub-leg + local-leg event types). `left` is a
-        // SITE-level local event (the performer's card is already gone
-        // when it fires) — {0} fills with the client id.
+        // Event-log labels (hub-leg + local-leg event types). `left` and
+        // `removed` are SITE-level local events (the performer's card is
+        // already gone when they fire) — {0} fills with the client id;
+        // the wording says WHO deleted it (the performer itself, or the
+        // monitor's「x」).
         events: {
           connected: "已连接",
           disconnected: "已断开",
@@ -101,6 +103,7 @@
           stopped: "已停止",
           "connect failed": "连接失败",
           left: "client {0} 退出（performer）",
+          removed: "client {0} 移除（monitor）",
         },
         // Event details the server itself words (external diagnostics
         // — socket.io reasons, error messages — stay raw).
@@ -136,6 +139,9 @@
           noEvents: "暂无事件",
           scan: "扫码打开演奏者页面",
           qrAlt: "演奏者页面二维码",
+          // The performer card's corner「x」(issue #13) — icon-only on the
+          // card, so the word lives just for the aria-label.
+          remove: "移除",
           selfTag: "本站",
           performer: "演奏者 {0}",
           ownFallback: "本站",
@@ -217,6 +223,7 @@
           stopped: "Stopped",
           "connect failed": "Connect failed",
           left: "client {0} left",
+          removed: "client {0} removed",
         },
         eventDetails: {
           noHubConfigured: "no hub configured",
@@ -249,6 +256,7 @@
           noEvents: "No events yet",
           scan: "Scan to open the performer page",
           qrAlt: "QR code for the performer page",
+          remove: "Remove",
           selfTag: "This site",
           performer: "Performer {0}",
           ownFallback: "This node",
@@ -283,15 +291,17 @@
 
     // Performer roster cap (id space, PlayerRegistry) and the
     // per-performer event vocabulary (lib/local-leg.js producer,
-    // monitor page consumer). `left` is site-level: a voluntary exit
-    // deletes the card, so the event lives on in the session's
-    // site-wide log instead (issue #10).
+    // monitor page consumer). `left` and `removed` are site-level: the
+    // two deletion paths (#10 the performer's own 退出检测, #13 the
+    // monitor's「x」) both delete the card, so the event lives on in the
+    // session's site-wide log instead — the type says who deleted.
     maxClients: 16,
     localEvents: {
       connected: "connected",
       disconnected: "disconnected",
       reconnected: "reconnected",
       left: "left",
+      removed: "removed",
     },
 
     // Derived end-to-end numbers (parent #1): the star topology has no
@@ -359,18 +369,27 @@
       //   leave:    page → server — voluntary exit (issue #10): the
       //             server deletes the client outright; the page closes
       //             the socket and shows its "left" cover
+      //   removed:  server → page — the monitor deleted this client
+      //             (issue #13): same exit state as `leave`, worded
+      //             "removed by the monitor"
       join: "join",
       joined: "joined",
       rejected: "rejected",
       probe: "local:probe",
       ack: "local:ack",
       leave: "leave",
+      removed: "removed",
       // Monitor page ↔ score server:
       //   config: submit the connection form { url, token, room, nodeId }
       //   state:  the full site snapshot — hub leg + peers + local
       //           legs + overall (token never echoed back)
+      //   remove: page → server { id } — delete that performer (issue
+      //           #13): every card carries an「x」, online or not; the
+      //           server runs the same deletion as `leave` and, for an
+      //           online client, first notifies the phone via `removed`
       hubConfig: "hub:config",
       state: "state",
+      remove: "remove",
     },
   };
 });

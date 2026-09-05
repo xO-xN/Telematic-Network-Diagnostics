@@ -367,6 +367,28 @@ header .sub {
   color: var(--muted);
 }
 
+/* The performer card's corner「x」(issue #13): icon-only (the word
+ * lives in the aria-label, from the copy table), quiet until hovered,
+ * present on every card — online or disconnected. Single tap deletes
+ * the client on the server; no confirmation. */
+.remove-btn {
+  flex: none;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1;
+  font-family: inherit;
+  color: var(--muted);
+  background: none;
+  border: none;
+  border-radius: 4px;
+  padding: 3px 5px;
+  cursor: pointer;
+}
+
+.remove-btn:hover {
+  color: var(--danger);
+}
+
 /* ------------------------------------------------------------
  * Local panel (monitor, issue #5): this site's performers
  * ------------------------------------------------------------ */

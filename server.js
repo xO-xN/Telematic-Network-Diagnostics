@@ -18,7 +18,9 @@
 //   (issue #10, the `leave` event) instead deletes the client outright:
 //   the card, the id and the claim-token binding all go, the site
 //   verdict stops counting the leg, and the same token rejoining is a
-//   fresh client.
+//   fresh client. The monitor's「x」(issue #13, the `remove` command)
+//   runs the same deletion on any card — online ones are notified
+//   (`removed`) before their socket is kicked.
 // - shuts down cleanly on SIGINT / SIGTERM
 //
 // Hub connection, two channels (issue #3, the Phase 0 validation
@@ -547,17 +549,32 @@ io.on("connection", (socket) => {
     local.recordAck(id, Date.now() - pending.sentAt, processingMs);
   });
 
+  // The ONE deletion path both exits share (#10 the performer's own
+  // 退出检测, #13 the monitor's「x」): registry binding, in-flight
+  // probes, the session card and the broadcast all go — the site
+  // verdict stops counting the leg, the slot and the claim-token
+  // mapping are freed. Returns the released assignment (an online
+  // client's socket binding) or null — a dropped card's binding is
+  // already gone (the socket's disconnect released it), which is
+  // exactly the no-notify case.
+  function deletePerformer(id, type) {
+    const assignment = registry.release(id);
+
+    clearPending(id);
+    local.removeClient(id, Date.now(), type);
+    broadcastState();
+    return assignment;
+  }
+
   // The performer page's voluntary exit (issue #10): the phone tapped
-  // 退出检测. The client is DELETED outright — no red card, no drag on
-  // the site verdict, the claim-token mapping and the slot are freed
-  // (a later join with the same token arrives as a brand-new client),
-  // and the exit lands in the site-level event log. The server then
-  // kicks the socket itself: the page cannot close it race-free (a
-  // close racing the leave packet's flush would drop the delete), and
-  // this way the teardown provably happens AFTER the deletion. The
-  // socket disconnect that follows finds nothing bound and changes
-  // nothing (disconnect → Red keeps its exact default behavior for
-  // every OTHER kind of drop).
+  // 退出检测. A voluntary exit is not a network fault — no red card, no
+  // drag on the site verdict — and the exit lands in the site-level
+  // event log. The server then kicks the socket itself: the page
+  // cannot close it race-free (a close racing the leave packet's flush
+  // would drop the delete), and this way the teardown provably happens
+  // AFTER the deletion. The socket disconnect that follows finds
+  // nothing bound and changes nothing (disconnect → Red keeps its
+  // exact default behavior for every OTHER kind of drop).
   socket.on(EVENTS.leave, () => {
     const id = registry.findIdBySocket(socket.id);
 
@@ -565,11 +582,37 @@ io.on("connection", (socket) => {
       return;
     }
 
-    registry.release(id);
-    clearPending(id);
-    local.removeClient(id, Date.now());
-    broadcastState();
+    deletePerformer(id, shared.localEvents.left);
     socket.disconnect(true);
+  });
+
+  // The monitor's removal of a performer (issue #13): the「x」on any
+  // performer card — online or disconnected, no confirmation — runs
+  // the same deletion as the leave above; the site event says "removed"
+  // (who deleted it). An ONLINE client is notified before the kick so
+  // the phone can word its exit cover 已被移出检测: the notice is
+  // queued on the phone's socket ahead of the disconnect, and the
+  // kick's own disconnect handler finds nothing bound — same as the
+  // leave. A disconnected card has no socket to notify; its deletion
+  // takes the identical path minus the notice.
+  socket.on(EVENTS.remove, (payload) => {
+    const id =
+      payload && typeof payload.id === "number" ? payload.id : null;
+
+    if (id === null) {
+      return;
+    }
+
+    const assignment = deletePerformer(id, shared.localEvents.removed);
+
+    if (assignment) {
+      const clientSocket = io.sockets.sockets.get(assignment.socketId);
+
+      if (clientSocket) {
+        clientSocket.emit(EVENTS.removed);
+        clientSocket.disconnect(true);
+      }
+    }
   });
 
   socket.on("disconnect", () => {

@@ -683,9 +683,9 @@ function renderPeerCard(nodeId, peer, own) {
 // The local panel: THIS site's performers, one compact card each —
 // status (LND rules: latency participates on a LAN), metrics, and the
 // per-performer event log (connected / disconnected / reconnected).
-// Site-level events (a performer's voluntary exit deletes the card, so
-// its trail lives here instead) render as one muted line under the
-// cards — issue #10.
+// Site-level events (a deletion — the performer's voluntary exit #10
+// or the monitor's「x」#13 — deletes the card, so the trail lives here
+// instead) render as one muted line under the cards.
 function renderLocal() {
   localCardsEl.textContent = "";
 
@@ -741,11 +741,22 @@ function renderPerformerCard(id, client) {
   const t = T();
   const card = el("div", "client-card " + statusClass(client.status));
   const head = el("div", "head");
+  // The corner「x」(issue #13): every performer card is deletable —
+  // online or disconnected, single tap, no confirmation. The server
+  // runs the same deletion as a voluntary exit; for an online client
+  // it also notifies the phone (`removed`) before kicking its socket.
+  const removeButton = el("button", "remove-btn", "✕");
+
+  removeButton.setAttribute("aria-label", t.monitor.remove);
+  removeButton.addEventListener("click", () => {
+    socket.emit(P.events.remove, { id: Number(id) });
+  });
 
   head.append(
     el("span", "dot on"),
     el("span", null, fmt(t.monitor.performer, [id])),
     el("span", "status-word", client.status.toUpperCase()),
+    removeButton,
   );
   card.append(
     head,

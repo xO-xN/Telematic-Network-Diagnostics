@@ -10,6 +10,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
+const shared = require("../public/shared");
 const {
   STATUS,
   percentile,
@@ -524,6 +525,24 @@ test("LocalSession: removeClient logs the exit site-level, with agoMs in the sna
 
   assert.deepEqual(snap.events, [
     { type: "left", client: 1, at: 5000, agoMs: 1000 },
+  ]);
+});
+
+test("LocalSession: a monitor removal logs its own event type, not the performer's", () => {
+  // Issue #13: the deletion path is one (#10's removeClient), but the
+  // site-level log must tell WHO deleted — the monitor's「x」logs
+  // "removed" ("client N 移除（monitor）"), the performer's own 退出检测
+  // button keeps logging "left".
+  const session = new LocalSession();
+
+  session.addClient(1, 1000);
+  session.addClient(2, 2000);
+  session.removeClient(1, 3000, shared.localEvents.removed);
+  session.removeClient(2, 4000);
+
+  assert.deepEqual(session.snapshot(5000).events, [
+    { type: "removed", client: 1, at: 3000, agoMs: 2000 },
+    { type: "left", client: 2, at: 4000, agoMs: 1000 },
   ]);
 });
 

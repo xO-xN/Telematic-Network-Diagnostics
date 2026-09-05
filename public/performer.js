@@ -21,6 +21,10 @@
 // normally on reopen. Rejoining sends the SAME claim token, which the
 // server no longer knows — a deliberate fresh client (new id, new
 // measurement, gray warm-up).
+//
+// The same exit state has a second door in (issue #13): the server's
+// `removed` event, sent when the monitor taps this performer card's「x」.
+// The only difference is the wording — 已被移出检测 instead of 已退出检测.
 
 const P = window.PNDS;
 
@@ -52,7 +56,7 @@ app.innerHTML =
   "</div>" +
   '<button class="leave-btn" id="b-leave">退出检测 Leave testing</button>' +
   '<div class="left-cover hidden" id="left-cover">' +
-  '<p class="left-title">已退出检测 · Left testing</p>' +
+  '<p class="left-title" id="left-title">已退出检测 · Left testing</p>' +
   '<p class="left-hint">重新加入 · Rejoin</p>' +
   "</div>";
 
@@ -67,6 +71,7 @@ const metaEl = document.getElementById("p-meta");
 const perfEl = document.getElementById("perf");
 const leaveButton = document.getElementById("b-leave");
 const coverEl = document.getElementById("left-cover");
+const coverTitleEl = document.getElementById("left-title");
 
 let clientId = null;
 // In-memory only (issue #10): the exited state must die with the page —
@@ -98,13 +103,18 @@ function setHidden(element, hidden) {
 }
 
 // The whole page flips to one big tap target: dots gone, socket closed.
-function setLeft(exited) {
+// `removed` words the cover for the monitor-initiated exit (#13); the
+// voluntary 退出检测 keeps its own wording (#10).
+function setLeft(exited, removed = false) {
   left = exited;
   setHidden(perfEl, exited);
   setHidden(leaveButton, exited);
   setHidden(coverEl, !exited);
 
   if (exited) {
+    coverTitleEl.textContent = removed
+      ? "已被移出检测 · Removed from testing"
+      : "已退出检测 · Left testing";
     clientId = null;
     statusEl.textContent = "Connecting…";
     metaEl.textContent = "";
@@ -146,12 +156,22 @@ socket.on("disconnect", () => {
     // The server kicked the socket once it had processed the leave
     // (the authoritative teardown — the page cannot close race-free
     // right after emitting). Any disconnect while exited ends the same
-    // way: stop reconnecting.
+    // way: stop reconnecting. This also lands for a REMOVAL: the
+    // server sends `removed` first, then kicks (below), so `left` is
+    // already set when the disconnect arrives.
     socket.close();
     return;
   }
 
   setJoined(false);
+});
+
+// Removed by the monitor (issue #13): this performer card's「x」was
+// tapped on the monitor. The server has already deleted the client and
+// disconnects this socket next — same exited state as a voluntary
+// leave, worded as a removal.
+socket.on(P.events.removed, () => {
+  setLeft(true, true);
 });
 
 // The three dots: this device's own local-leg card, this site's local-leg

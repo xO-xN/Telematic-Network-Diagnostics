@@ -750,6 +750,11 @@ test("performer page: leave button exits — leave emitted, socket closed, cover
   );
   assert.equal(page.socket.closes, 0, "the page does not close in the same tick (flush race)");
   assert.ok(!cover.classList.contains("hidden"), "the left cover shows");
+  assert.equal(
+    page.document.getElementById("left-title").textContent,
+    "已退出检测 · Left testing",
+    "the VOLUNTARY exit wording (the monitor-removed variant differs)",
+  );
   assert.ok(perf.classList.contains("hidden"), "the dots are gone");
   assert.ok(leaveButton.classList.contains("hidden"), "the leave button is gone too");
 
@@ -854,14 +859,14 @@ test("performer page: the leave button ignores a second tap once exited", () => 
 // Monitor page — the site-level local event line (issue #10)
 // ------------------------------------------------------------
 
-test("monitor page: the local panel logs a voluntary exit under the cards", () => {
+test("monitor page: the local panel logs both deletions (exit, removal) under the cards", () => {
   const page = loadPage("monitor.js");
 
   const state = sampleState();
 
   state.local.events = [
     { type: "left", client: 2, at: 1, agoMs: 3000 },
-    { type: "left", client: 3, at: 2, agoMs: 2000 },
+    { type: "removed", client: 3, at: 2, agoMs: 2000 },
   ];
   deliver(page.socket, page.sandbox, page.sandbox.PNDS.events.state, state);
 
@@ -869,9 +874,12 @@ test("monitor page: the local panel logs a voluntary exit under the cards", () =
   const line = localCards.children[localCards.children.length - 1];
 
   assert.ok(line.classList.contains("site-events"));
-  assert.equal(line.textContent, "client 3 退出（performer） 2 秒前 · client 2 退出（performer） 3 秒前");
+  assert.equal(
+    line.textContent,
+    "client 3 移除（monitor） 2 秒前 · client 2 退出（performer） 3 秒前",
+  );
 
-  // English table: same wire event, reworded live. The re-render
+  // English table: same wire events, reworded live. The re-render
   // rebuilds the line — grab it fresh.
   for (const handler of page.messageListeners) {
     handler(LOCALE_MESSAGE("en"));
@@ -881,6 +889,122 @@ test("monitor page: the local panel logs a voluntary exit under the cards", () =
 
   assert.equal(
     lineEn.textContent,
-    "client 3 left 2s ago · client 2 left 3s ago",
+    "client 3 removed 2s ago · client 2 left 3s ago",
   );
+});
+
+// ------------------------------------------------------------
+// Monitor page — performer removal「x」(issue #13)
+// ------------------------------------------------------------
+
+test("monitor page: every performer card carries an「x」— click emits remove with the id", () => {
+  const page = loadPage("monitor.js");
+  const events = page.sandbox.PNDS.events;
+
+  // One ONLINE card (client 1) and one DISCONNECTED card (client 2):
+  // the「x」belongs on both — a dead card is removable too.
+  const state = sampleState();
+
+  state.local.clients["2"] = {
+    ...state.local.clients["1"],
+    connected: false,
+    status: "red",
+  };
+  deliver(page.socket, page.sandbox, events.state, state);
+
+  const localCards = page.document.getElementById("local-cards");
+
+  assert.equal(localCards.children.length, 2);
+
+  for (const card of localCards.children) {
+    const head = card.children[0];
+    const x = head.children[head.children.length - 1];
+
+    assert.equal(x.tagName, "button", "the corner control is a button");
+    assert.equal(x.textContent, "✕", "icon-only — the word lives in the aria-label");
+    assert.equal(x.attributes["aria-label"], "移除");
+  }
+
+  // Single tap, no confirmation: both cards' x send the remove command
+  // straight to the server, keyed by the numeric id. (JSON compare —
+  // the payload object is created inside the vm realm.)
+  click(localCards.children[0].children[0].children[3]);
+  click(localCards.children[1].children[0].children[3]);
+
+  assert.equal(
+    JSON.stringify(
+      page.socket.emitted.filter(([event]) => event === events.remove),
+    ),
+    JSON.stringify([
+      ["remove", { id: 1 }],
+      ["remove", { id: 2 }],
+    ]),
+  );
+
+  // English table re-words the aria-label live (a re-render rebuilds
+  // the cards — grab fresh).
+  for (const handler of page.messageListeners) {
+    handler(LOCALE_MESSAGE("en"));
+  }
+
+  const fresh = page.document.getElementById("local-cards").children[0];
+
+  assert.equal(fresh.children[0].children[3].attributes["aria-label"], "Remove");
+});
+
+// ------------------------------------------------------------
+// Performer page — removed by the monitor (issue #13)
+// ------------------------------------------------------------
+
+test("performer page: removed by the monitor — removed cover, no auto-rejoin, cover tap rejoins", () => {
+  const page = loadPage("performer.js");
+  const events = page.sandbox.PNDS.events;
+
+  deliver(page.socket, page.sandbox, "connect");
+  deliver(page.socket, page.sandbox, events.joined, {
+    id: 1,
+    token: "t".repeat(48),
+    recovered: false,
+  });
+
+  // The monitor tapped this card's「x」: the server deleted the client
+  // and the notice arrives ahead of the kick.
+  deliver(page.socket, page.sandbox, events.removed);
+
+  const cover = page.document.getElementById("left-cover");
+
+  assert.ok(!cover.classList.contains("hidden"), "the cover shows");
+  assert.equal(
+    page.document.getElementById("left-title").textContent,
+    "已被移出检测 · Removed from testing",
+    "worded as a removal, not a voluntary exit",
+  );
+  assert.ok(page.document.getElementById("perf").classList.contains("hidden"), "the dots are gone");
+
+  // The kick (the server disconnects right after the notice): any
+  // disconnect while exited closes for good — no auto-reconnect.
+  deliver(page.socket, page.sandbox, "disconnect");
+
+  assert.equal(page.socket.closes, 1);
+
+  deliver(page.socket, page.sandbox, "connect");
+
+  assert.equal(
+    page.socket.emitted.filter(([event]) => event === events.join).length,
+    1,
+    "no join while removed",
+  );
+
+  // The whole cover is the rejoin button — same token, which the
+  // server no longer knows: a deliberate fresh client.
+  click(cover);
+
+  assert.equal(page.socket.opens, 1);
+
+  deliver(page.socket, page.sandbox, "connect");
+
+  const joins = page.socket.emitted.filter(([event]) => event === events.join);
+
+  assert.equal(joins.length, 2);
+  assert.equal(joins[1][1].token, "t".repeat(48));
 });

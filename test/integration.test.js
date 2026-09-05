@@ -658,6 +658,181 @@ test("local leg: voluntary leave — deleted card, freed slot, old token rejoins
 });
 
 // ------------------------------------------------------------
+// Monitor removal end to end (issue #13): the monitor taps a performer
+// card's「x」— online or disconnected, no confirmation. The server runs
+// #10's deletion primitives (freed slot and token, no red trail, site
+// verdict un-dragged, every monitor converges) and, for an ONLINE
+// client, first sends `removed` and then kicks the socket: the phone
+// lands in its 已被移出检测 cover, and its later 重新加入 with the OLD
+// token is a brand-new client.
+// ------------------------------------------------------------
+
+test("local leg: monitor removal — notified phone, corrected monitors, fresh rejoin", async (t) => {
+  await assertPortsFree([6868, 6869]);
+
+  const server = spawn(process.execPath, ["server.js"], {
+    cwd: PROJECT_ROOT,
+    stdio: "ignore",
+  });
+  t.after(async () => stopProcess(server));
+
+  await waitForHealthReady();
+
+  // Two devices run the monitor: the removal one operator taps the「x」,
+  // the other must converge on the same corrected snapshot.
+  const monitorA = await connectMonitor();
+  const monitorB = await connectMonitor();
+  t.after(() => monitorA.close());
+  t.after(() => monitorB.close());
+
+  const p1 = await connectPerformerAt(PERFORMER_URL);
+  const p2 = await connectPerformerAt(PERFORMER_URL);
+  t.after(() => p1.socket.close());
+  t.after(() => p2.socket.close());
+
+  assert.equal(p1.joined.id, 1);
+  assert.equal(p2.joined.id, 2);
+
+  await waitForState(
+    monitorA,
+    (state) => state.local.clients["1"] && state.local.clients["2"],
+  );
+
+  // The wire order on the removed phone: the notice, then the kick.
+  const order = [];
+
+  p1.socket.once(EVENTS.removed, () => order.push("removed"));
+  p1.socket.once("disconnect", () => order.push("disconnect"));
+
+  monitorA.emit(EVENTS.remove, { id: 1 });
+
+  await new Promise((resolve) => p1.socket.once("disconnect", resolve));
+
+  assert.deepEqual(
+    order,
+    ["removed", "disconnect"],
+    "the phone hears `removed` BEFORE the server drops its socket",
+  );
+
+  // Both monitors converge: card gone, no red trail, one "removed"
+  // site event — and the removal is not logged as a disconnect.
+  const corrected = {
+    A: waitForState(
+      monitorA,
+      (state) =>
+        !state.local.clients["1"] &&
+        state.local.clients["2"] &&
+        state.local.events.some(
+          (event) => event.type === "removed" && event.client === 1,
+        ),
+    ),
+    B: waitForState(
+      monitorB,
+      (state) =>
+        !state.local.clients["1"] &&
+        state.local.clients["2"] &&
+        state.local.events.some(
+          (event) => event.type === "removed" && event.client === 1,
+        ),
+    ),
+  };
+
+  const [stateA, stateB] = await Promise.all([corrected.A, corrected.B]);
+
+  for (const state of [stateA, stateB]) {
+    assert.equal(state.local.performers, 1, "p2 is still online");
+    assert.equal(
+      state.local.events.filter((event) => event.type === "disconnected").length,
+      0,
+      "a removal is not a network fault — no red trail",
+    );
+  }
+
+  // --- the freed slot and token: a fresh client takes the slot, and
+  // the removed phone's 重新加入 with its OLD token is a brand-new
+  // client (different id, no inherited history) ---
+  const p3 = await connectPerformerAt(PERFORMER_URL);
+  t.after(() => p3.socket.close());
+
+  assert.equal(p3.joined.id, 1, "the freed slot is reused");
+
+  const p1back = await connectPerformerAt(PERFORMER_URL, p1.joined.token);
+  t.after(() => p1back.socket.close());
+
+  assert.equal(p1back.joined.id, 3, "the old token gets a DIFFERENT id");
+  assert.equal(p1back.joined.recovered, false, "not a recovery — a new client");
+
+  const fresh = await waitForState(
+    monitorA,
+    (state) =>
+      state.local.clients["3"] &&
+      state.local.clients["3"].connected &&
+      state.local.clients["3"].events.length === 1 &&
+      state.local.clients["3"].events[0].type === "connected",
+    8000,
+  );
+
+  assert.equal(
+    fresh.local.clients["3"].status,
+    "gray",
+    "fresh measurement — gray warm-up, no inherited history",
+  );
+
+  // --- a DISCONNECTED card is removable too (no notification path):
+  // p2 dropped, its card sits Red; the other monitor's「x」deletes it ---
+  p2.socket.close();
+
+  await waitForState(
+    monitorA,
+    (state) =>
+      state.local.clients["2"] &&
+      !state.local.clients["2"].connected &&
+      state.local.clients["2"].status === "red",
+    8000,
+  );
+
+  monitorB.emit(EVENTS.remove, { id: 2 });
+
+  await waitForState(
+    monitorB,
+    (state) =>
+      !state.local.clients["2"] &&
+      state.local.clients["3"] &&
+      state.local.events.some(
+        (event) => event.type === "removed" && event.client === 2,
+      ),
+    8000,
+  );
+
+  // --- a bogus removal is a no-op: no event, nothing disturbed ---
+  monitorA.emit(EVENTS.remove, { id: 99 });
+
+  const afterBogus = await waitForState(
+    monitorA,
+    (state) => state.local.clients["3"],
+  );
+
+  assert.equal(
+    afterBogus.local.events.filter(
+      (event) => event.type === "removed" && event.client === 99,
+    ).length,
+    0,
+    "an unknown id pushes no site event",
+  );
+  assert.ok(afterBogus.local.clients["3"], "the live clients are untouched");
+
+  // --- the page wiring (source-level): the「x」and its command, the
+  // phone's removed cover ---
+  const monitorJs = await (await fetch(`${MONITOR_URL}/monitor.js`)).text();
+  assert.match(monitorJs, /remove-btn/, "the performer cards carry the「x」");
+  assert.match(monitorJs, /P\.events\.remove/, "the tap emits the remove command");
+
+  const performerJs = await (await fetch(`${PERFORMER_URL}/performer.js`)).text();
+  assert.match(performerJs, /P\.events\.removed/, "the phone handles the removed notice");
+  assert.match(performerJs, /已被移出检测/, "the removal words its own cover");
+});
+
+// ------------------------------------------------------------
 // Flower view end to end (issue #4): two project instances + hub.
 // The second instance is a real copy of the project with its own
 // manifest ports — literally "two deployments on one machine", the
@@ -885,6 +1060,41 @@ test("flower view: two instances see each other, overall follows the worst node"
     exited.overall.attributionLeg,
     "hub",
     "no local leg counts anymore — the exit un-dragged the verdict",
+  );
+
+  // --- #13: the MONITOR removes a performer — the same deletion
+  // reaches the other site through the hub. A performer rejoins B,
+  // B's own monitor taps the card's「x」, and A's verdict corrects the
+  // same second ---
+  const performerAgain = await connectPerformerAt(
+    `http://127.0.0.1:${SITE_B_PERFORMER}`,
+  );
+  t.after(() => performerAgain.socket.close());
+
+  await waitForState(
+    monitorA,
+    (state) =>
+      state.leg &&
+      state.leg.peers["site-b"] &&
+      state.leg.peers["site-b"].local &&
+      state.leg.peers["site-b"].local.status !== null,
+    25000,
+  );
+
+  monitorB.emit(EVENTS.remove, { id: performerAgain.joined.id });
+
+  await waitForState(
+    monitorA,
+    (state) =>
+      state.leg &&
+      state.leg.peers["site-b"] &&
+      state.leg.peers["site-b"].connected &&
+      state.leg.peers["site-b"].local &&
+      state.leg.peers["site-b"].local.status === null &&
+      state.leg.peers["site-b"].local.performers === 0 &&
+      state.overall &&
+      state.overall.status === "green",
+    25000,
   );
 
   // --- one side drops: the other side's overall turns red, attributed ---
