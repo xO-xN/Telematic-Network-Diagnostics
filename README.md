@@ -167,7 +167,7 @@ ring is its local-leg worst (gray = no performer has joined there).
 | Leg | Red when | Yellow when | Green when | Latency colors? |
 | --- | --- | --- | --- | --- |
 | Hub (公网腿) | unreachable, jitter (IQR) ≥ 30 ms, loss ≥ 3%, or ≥ 2 reconnects in 15 s | anything between red and green (incl. exactly one reconnect) | jitter < 10 ms, loss < 0.5%, 0 reconnects | **Never** — reported as a plain number |
-| Local (本地腿) | disconnected, 3 consecutive probe timeouts, burst loss > 5% | jitter p95 > 25 ms, RTT p95 > 100 ms, 1–2 timeouts, or between thresholds | jitter < 10 ms and RTT p95 < 50 ms | **Yes** — on a LAN, slow is broken |
+| Local (本地腿) | disconnected, 3 consecutive probe timeouts, burst loss > 5% | jitter p95 > 50 ms, RTT p95 > 200 ms, 1–2 timeouts, or between thresholds | jitter < 25 ms and RTT p95 < 100 ms | **Yes** — on a LAN, slow is broken |
 
 All thresholds are 初版，待两节点实测校准 (calibration against a real
 two-node deployment is an expected post-release step).
@@ -381,7 +381,7 @@ npm start        # 演奏者页 http://<局域网IP>:6868/，监视端 :6869/
 | 腿 | 红条件 | 黄条件 | 绿条件 | 延迟染色？ |
 | --- | --- | --- | --- | --- |
 | hub（公网腿） | 不可达、抖动 (IQR) ≥ 30 ms、丢包 ≥ 3%、15 秒内 ≥ 2 次重连 | 红绿之间（含恰好一次重连） | 抖动 < 10 ms、丢包 < 0.5%、0 重连 | **从不**——只标数字 |
-| 本地（本地腿） | 断线、连续 3 次探测超时、突发丢包 > 5% | 抖动 p95 > 25 ms、RTT p95 > 100 ms、1–2 次超时、或介于阈值之间 | 抖动 < 10 ms 且 RTT p95 < 50 ms | **是**——局域网内慢即故障 |
+| 本地（本地腿） | 断线、连续 3 次探测超时、突发丢包 > 5% | 抖动 p95 > 50 ms、RTT p95 > 200 ms、1–2 次超时、或介于阈值之间 | 抖动 < 25 ms 且 RTT p95 < 100 ms | **是**——局域网内慢即故障 |
 
 所有阈值均为初版，待两节点实测校准。
 
