@@ -43,6 +43,19 @@ test("manifest serves the score server on ports 6868 / 6869", () => {
   assert.equal(manifest.scoreServer.monitorPort, 6869);
 });
 
+test("manifest declares the cross-internet performance capability", () => {
+  // The App v1.4.0 contract (App #58's manifest reference, ADR-0004):
+  // a top-level optional boolean `telematic`. The declaration is FOR THE
+  // APP — it gates the hub-variable injection and the「设置节点」start
+  // gate; TND itself reads only the four env vars it always read (zero
+  // code change on this side). App-side semantics are lenient — only an
+  // explicit true declares — so this repo simply pins that its own
+  // manifest carries exactly that.
+  const manifest = loadManifest(PROJECT_ROOT);
+
+  assert.equal(manifest.telematic, true);
+});
+
 // ------------------------------------------------------------
 // Config resolution
 // ------------------------------------------------------------

@@ -207,7 +207,7 @@ error string), and transport failure (hub down / network
 unreachable). Each has its own localized line; no state masquerades
 as another.
 
-### Hub connection (env contract — frozen, App v1.3.0)
+### Hub connection (env contract — frozen in App v1.3.0; presence semantics per v1.4.0)
 
 The score server connects to the hub through either channel; both feed
 one path, and a form submission replaces the env config:
@@ -230,7 +230,10 @@ form — an old browser memory never masks the App's config; an env
 room replaces the room input with the derived full name
 (`{project id}_{group}`) shown read-only; a hand edit holds only for
 the session (the next load restores the env). Opening the monitor
-auto-starts measuring — zero buttons.
+auto-starts measuring — zero buttons. The manifest declares the
+capability itself (`"telematic": true`, App v1.4.0's optional boolean
+— only an explicit true declares): that declaration is what turns the
+App's injection on.
 
 ### Running the hub
 
@@ -427,7 +430,7 @@ hub + hub + 本地（本地段取该站在线演奏者中最差的 p50）。任�
 被占用（去 App 改节点名；映射待 pnds-hub 错误串定稿后生效）、传输故障
 （hub 宕机 / 网络不通）。三态各有本地化文案，互不误报。
 
-### hub 连接（env 契约——已冻结，App v1.3.0）
+### hub 连接（env 契约——App v1.3.0 冻结；在场语义见 v1.4.0）
 
 score server 经两条通道之一连接 hub；两条通道汇入同一条路径，表单提交
 会替换 env 配置：
@@ -446,7 +449,9 @@ token 是独立的环境变量，绝不拼进 URL：URL 会泄进服务器日志
 v1.4.0（issue #15）起 env 逐字段优先于已保存的表单——浏览器旧记忆绝不
 静默盖住 App 的配置；env 房间在场时 room 输入框退场，改为派生全名
 （`{工程 id}_{分组号}`）的只读展示；手改仅当次会话生效（下次加载回到
-env）。打开 monitor 即自动开测——零按钮。
+env）。打开 monitor 即自动开测——零按钮。能力声明在 manifest 自身
+（`"telematic": true`，App v1.4.0 的可选布尔——仅显式 true 算声明）：
+App 正是凭这一声明打开注入。
 
 ### 运行 hub
 
