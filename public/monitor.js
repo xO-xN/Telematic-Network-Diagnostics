@@ -19,8 +19,9 @@
 //                     numbers (site pair = two hub legs; performer
 //                     pair = local + hub + hub + local; big number,
 //                     small composition formula)
-//   form + log + QR — the #3 connect form, hub-leg event log,
-//                     performer QR
+//   form + log + QR — the #3 connect form (issue #15's App-present
+//                     shape: env wins per field, the App-derived room
+//                     shows read-only), hub-leg event log, performer QR
 //
 // RTT numbers are never colored anywhere — only quality is.
 //
@@ -59,7 +60,10 @@ app.innerHTML =
   '<div class="form-grid">' +
   '<label><span id="l-url"></span><input id="f-url" placeholder="wss://hub.example.com" /></label>' +
   '<label><span id="l-token"></span><input id="f-token" type="password" placeholder="HUB_TOKEN" /></label>' +
-  '<label><span id="l-room"></span><input id="f-room" placeholder="default" /></label>' +
+  // The room slot carries BOTH shapes (issue #15): the hand-fill input
+  // for standalone use, and the read-only line that replaces it when
+  // the App injects the derived room full name ({project id}_{group}).
+  '<label><span id="l-room"></span><input id="f-room" placeholder="default" /><span class="derived-room hidden" id="f-room-derived"></span></label>' +
   '<label><span id="l-node"></span><input id="f-node" placeholder="site name" /></label>' +
   "</div>" +
   '<div class="form-actions">' +
@@ -105,6 +109,7 @@ const cardsEl = document.getElementById("cards");
 const urlInput = document.getElementById("f-url");
 const tokenInput = document.getElementById("f-token");
 const roomInput = document.getElementById("f-room");
+const derivedRoomEl = document.getElementById("f-room-derived");
 const nodeInput = document.getElementById("f-node");
 const connectButton = document.getElementById("b-connect");
 const logEl = document.getElementById("log");
@@ -140,9 +145,12 @@ function fmt(template, params) {
 
 let state = null;
 let formPrefilled = false;
-// The config loaded at startup (localStorage / env prefill): the only
-// thing auto-submit ever sends, so a transient socket reconnect can
-// never submit a half-edited form.
+// What the auto-start sends: the config loaded at startup, REPLACED by
+// whatever the operator later submits — so a transient socket
+// reconnect can never submit a half-edited form, and never rolls a
+// manual session edit back to the startup values either (issue #15:
+// hand edits hold for the whole session; only the next PAGE LOAD
+// restores the env).
 let autoConfig = null;
 
 const socket = io("http://" + location.hostname + ":" + P.performerPort, {
@@ -189,9 +197,14 @@ function loadSavedConfig() {
   }
 }
 
-// localStorage (the operator's explicit choice) wins over the env
-// defaults; env fills whatever was never saved (parent #1: env 存在时
-// 作预填默认值 — the dual-channel Phase 0 shape).
+// The App-present prefill (issue #15): env values win FIELD BY FIELD
+// over the saved form — the App's node settings are the live
+// configuration, and an old browser memory must never silently mask
+// them; the saved values fill only what the env leaves empty (the
+// priority inversion of #3's "localStorage wins" dual-channel shape).
+// A manual edit still saves to localStorage, and the next page load
+// lets the env override it again — hand edits are session-only by
+// construction, with no extra state anywhere.
 //
 // Runs ONCE per page load (see render): the state broadcast ticks at
 // 1 Hz and must never clobber what the operator is typing.
@@ -205,10 +218,10 @@ function prefillForm() {
   const saved = loadSavedConfig();
   const env = (state && state.env) || {};
   const config = {
-    url: saved.url || env.hubUrl || "",
-    token: saved.token || env.hubToken || "",
-    room: saved.room || env.hubRoom || "",
-    nodeId: saved.nodeId || env.nodeId || "",
+    url: env.hubUrl || saved.url || "",
+    token: env.hubToken || saved.token || "",
+    room: env.hubRoom || saved.room || "",
+    nodeId: env.nodeId || saved.nodeId || "",
   };
 
   urlInput.value = config.url;
@@ -216,10 +229,26 @@ function prefillForm() {
   roomInput.value = config.room;
   nodeInput.value = config.nodeId;
 
+  applyRoomDisplay(env.hubRoom || "");
+
   if (config.url && config.token) {
     autoConfig = config;
     socket.emit(P.events.hubConfig, config);
   }
+}
+
+// The room slot's two shapes (issue #15): an env room means the App
+// derived it ({project id}_{group}) — the input exits and a read-only
+// line shows the full name to verify against. The hidden input keeps
+// carrying the value, so submits and the connect button's dirty check
+// ride it exactly as before. No env room → the operator hand-fills,
+// unchanged since #3.
+function applyRoomDisplay(envRoom) {
+  const appPresent = Boolean(envRoom);
+
+  derivedRoomEl.textContent = envRoom || "";
+  derivedRoomEl.classList.toggle("hidden", !appPresent);
+  roomInput.classList.toggle("hidden", appPresent);
 }
 
 function submitConfig(save) {
@@ -238,6 +267,9 @@ function submitConfig(save) {
     localStorage.setItem(P.storageKeys.hubConfig, JSON.stringify(config));
   }
 
+  // The submission is the session's intent from here on: a later
+  // socket reconnect re-sends IT, not the startup config (issue #15).
+  autoConfig = config;
   socket.emit(P.events.hubConfig, config);
   return true;
 }

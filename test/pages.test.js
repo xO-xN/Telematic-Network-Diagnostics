@@ -36,6 +36,17 @@ function makeNode(tag) {
       contains(name) {
         return node.classList.set.has(name);
       },
+      toggle(name, force) {
+        const on =
+          force === undefined ? !node.classList.set.has(name) : Boolean(force);
+
+        if (on) {
+          node.classList.set.add(name);
+        } else {
+          node.classList.set.delete(name);
+        }
+        return on;
+      },
     },
     style: { setProperty() {} },
     setAttribute(name, value) {
@@ -346,26 +357,255 @@ test("monitor page: env prefill lands on the FIRST state, not the null-state loa
   );
 });
 
-test("monitor page: a saved form wins over the env prefill", () => {
+test("monitor page: the env prefill wins over a saved form, per field (issue #15)", () => {
+  // Story 2 of the App-present shape: the operator hand-filled the form
+  // before (browser memory); the App's injected values must surface —
+  // old memory never silently masks the App config. Field by field: an
+  // empty env field still falls back to what was saved.
   const page = loadPage("monitor.js");
 
   page.sandbox.localStorage.setItem(
     "tnd-hub-config",
-    JSON.stringify({ url: "http://saved", token: "saved-token" }),
+    JSON.stringify({
+      url: "http://saved",
+      token: "saved-token",
+      room: "saved-room",
+      nodeId: "saved-node",
+    }),
   );
 
   const state = sampleState();
 
-  state.env = { hubUrl: "http://env-hub", hubToken: "env-token", hubRoom: "", nodeId: "" };
+  state.env = {
+    hubUrl: "http://env-hub",
+    hubToken: "env-token",
+    hubRoom: "rehearsal",
+    nodeId: "env-node",
+  };
   deliver(page.socket, page.sandbox, page.sandbox.PNDS.events.state, state);
 
-  assert.equal(page.document.getElementById("f-url").value, "http://saved");
-  assert.equal(page.document.getElementById("f-token").value, "saved-token");
+  assert.equal(page.document.getElementById("f-url").value, "http://env-hub");
+  assert.equal(page.document.getElementById("f-token").value, "env-token");
+  assert.equal(page.document.getElementById("f-room").value, "rehearsal");
+  assert.equal(page.document.getElementById("f-node").value, "env-node");
 
   const auto = page.socket.emitted.filter(([event]) => event === "hub:config");
 
   assert.equal(auto.length, 1);
-  assert.equal(auto[0][1].url, "http://saved");
+  assert.equal(auto[0][1].url, "http://env-hub", "auto-submit uses the env values");
+
+  // Per field: env carries ONLY the url — the saved values fill the rest.
+  const partial = loadPage("monitor.js");
+
+  partial.sandbox.localStorage.setItem(
+    "tnd-hub-config",
+    JSON.stringify({ url: "http://saved", token: "saved-token" }),
+  );
+
+  const partialState = sampleState();
+
+  partialState.env = {
+    hubUrl: "http://env-hub",
+    hubToken: "",
+    hubRoom: "",
+    nodeId: "",
+  };
+  deliver(partial.socket, partial.sandbox, partial.sandbox.PNDS.events.state, partialState);
+
+  assert.equal(partial.document.getElementById("f-url").value, "http://env-hub");
+  assert.equal(partial.document.getElementById("f-token").value, "saved-token");
+});
+
+test("monitor page: both sources empty keeps the form empty — nothing auto-submits", () => {
+  const page = loadPage("monitor.js");
+
+  deliver(page.socket, page.sandbox, page.sandbox.PNDS.events.state, sampleState());
+
+  for (const id of ["f-url", "f-token", "f-room", "f-node"]) {
+    assert.equal(page.document.getElementById(id).value, "", `${id} stays empty`);
+  }
+
+  assert.equal(
+    page.socket.emitted.filter(([event]) => event === "hub:config").length,
+    0,
+    "no url+token → no auto-connection",
+  );
+});
+
+test("monitor page: a manual edit is session-only — the next load restores the env config", () => {
+  // Story 3: the operator hand-edits a value for one ad-hoc attempt
+  // (e.g. a temporary node name); the edit saves to localStorage as
+  // before, but the App's env is what the NEXT page load prefills —
+  // the manual edit never outlives the session.
+  const env = {
+    hubUrl: "http://env-hub",
+    hubToken: "env-token",
+    hubRoom: "rehearsal",
+    nodeId: "env-node",
+  };
+
+  const first = loadPage("monitor.js");
+  const state = sampleState();
+
+  state.env = env;
+  deliver(first.socket, first.sandbox, first.sandbox.PNDS.events.state, state);
+
+  // The operator edits the node name and submits — the attempt is what
+  // the browser remembers.
+  first.document.getElementById("f-node").value = "my-adhoc-node";
+  first.document.getElementById("b-connect").listeners.click[0]();
+
+  const saved = first.sandbox.localStorage.getItem("tnd-hub-config");
+
+  assert.equal(JSON.parse(saved).nodeId, "my-adhoc-node", "the manual attempt saved to localStorage");
+
+  // The next load: the same browser memory, the same env — the env wins.
+  const second = loadPage("monitor.js");
+
+  second.sandbox.localStorage.setItem("tnd-hub-config", saved);
+
+  const stateAgain = sampleState();
+
+  stateAgain.env = env;
+  deliver(second.socket, second.sandbox, second.sandbox.PNDS.events.state, stateAgain);
+
+  assert.equal(second.document.getElementById("f-node").value, "env-node", "back to the App config");
+  assert.equal(second.document.getElementById("f-url").value, "http://env-hub");
+
+  const auto = second.socket.emitted.filter(([event]) => event === "hub:config");
+
+  assert.equal(auto.length, 1);
+  assert.equal(auto[0][1].nodeId, "env-node", "auto-submit is the env config again");
+});
+
+test("monitor page: a manual edit survives a mid-session socket reconnect", () => {
+  // "仅当次会话生效" covers the whole session, not just until the
+  // monitor's socket blips: the reconnect's auto-submit re-sends the
+  // SUBMITTED config (the session's intent), never the startup one —
+  // otherwise a Wi-Fi flap would silently roll the ad-hoc edit back to
+  // the App's values before the page ever reloads (issue #15).
+  const page = loadPage("monitor.js");
+  const state = sampleState();
+
+  state.env = {
+    hubUrl: "http://env-hub",
+    hubToken: "env-token",
+    hubRoom: "rehearsal",
+    nodeId: "env-node",
+  };
+  deliver(page.socket, page.sandbox, page.sandbox.PNDS.events.state, state);
+
+  page.document.getElementById("f-node").value = "my-adhoc-node";
+  page.document.getElementById("b-connect").listeners.click[0]();
+
+  // The transient reconnect: what leaves for the server now?
+  page.socket.emitted.length = 0;
+  deliver(page.socket, page.sandbox, "connect");
+
+  const resubmitted = page.socket.emitted.filter(
+    ([event]) => event === "hub:config",
+  );
+
+  assert.equal(resubmitted.length, 1);
+  assert.equal(
+    resubmitted[0][1].nodeId,
+    "my-adhoc-node",
+    "the session's own config, not the startup env",
+  );
+});
+
+test("monitor page: an env room replaces the input with the derived full name (issue #15)", () => {
+  // Story 5: with the App present the room is derived ({project
+  // id}_{group}) — the input exits, a read-only line shows the full
+  // name to verify against, and the connection carries it verbatim.
+  const page = loadPage("monitor.js");
+  const derivedRoom = "telematic-network-diagnostics_2";
+  const state = sampleState();
+
+  state.env = {
+    hubUrl: "http://env-hub",
+    hubToken: "env-token",
+    hubRoom: derivedRoom,
+    nodeId: "env-node",
+  };
+  deliver(page.socket, page.sandbox, page.sandbox.PNDS.events.state, state);
+
+  const roomInput = page.document.getElementById("f-room");
+  const derived = page.document.getElementById("f-room-derived");
+
+  assert.ok(roomInput.classList.contains("hidden"), "the room input exits");
+  assert.ok(!derived.classList.contains("hidden"), "the derived name shows");
+  assert.equal(derived.textContent, derivedRoom);
+
+  const auto = page.socket.emitted.filter(([event]) => event === "hub:config");
+
+  assert.equal(auto.length, 1);
+  assert.equal(auto[0][1].room, derivedRoom, "the connection carries the derived room verbatim");
+
+  // Without an env room the hand-filled behavior is unchanged (story 4):
+  // the input stays, the saved room prefills it, nothing else appears.
+  // The standalone path's own memory too: no env at all → the saved
+  // url+token still auto-connect (the no-App "reopen, no re-typing"
+  // shape, unchanged since #3).
+  const solo = loadPage("monitor.js");
+
+  solo.sandbox.localStorage.setItem(
+    "tnd-hub-config",
+    JSON.stringify({ url: "http://saved", token: "saved-token", room: "my-room" }),
+  );
+
+  const soloState = sampleState();
+
+  soloState.env = { hubUrl: "", hubToken: "", hubRoom: "", nodeId: "" };
+  deliver(solo.socket, solo.sandbox, solo.sandbox.PNDS.events.state, soloState);
+
+  const soloInput = solo.document.getElementById("f-room");
+  const soloDerived = solo.document.getElementById("f-room-derived");
+
+  assert.ok(!soloInput.classList.contains("hidden"), "no App → the room input stays");
+  assert.equal(soloInput.value, "my-room");
+  assert.ok(soloDerived.classList.contains("hidden"), "no derived display without the App");
+
+  const soloAuto = solo.socket.emitted.filter(([event]) => event === "hub:config");
+
+  assert.equal(soloAuto.length, 1, "the saved config auto-submits without any env");
+  assert.equal(soloAuto[0][1].url, "http://saved");
+  assert.equal(soloAuto[0][1].room, "my-room");
+});
+
+test("monitor page: the four-state button reads the App-present form as clean — 已连接 (issue #15)", () => {
+  // The dirty check under the new shape: the env-prefilled form IS the
+  // live config (the server normalized and echoed the same values), so
+  // a connected leg words the button 已连接 with nothing ever typed.
+  const page = loadPage("monitor.js");
+  const button = page.document.getElementById("b-connect");
+  const state = sampleState();
+
+  state.env = {
+    hubUrl: "http://env-hub",
+    hubToken: "env-token",
+    hubRoom: "rehearsal",
+    nodeId: "env-node",
+  };
+  state.activeConfig = {
+    url: "http://env-hub",
+    token: "env-token",
+    room: "rehearsal",
+    nodeId: "env-node",
+  };
+  state.leg.connected = true;
+  state.leg.everConnected = true;
+  deliver(page.socket, page.sandbox, page.sandbox.PNDS.events.state, state);
+
+  assert.equal(button.textContent, "已连接");
+  assert.equal(button.disabled, true);
+
+  // One drift from the env form (a temporary node name) → 重新连接.
+  page.document.getElementById("f-node").value = "adhoc";
+  deliver(page.socket, page.sandbox, page.sandbox.PNDS.events.state, state);
+
+  assert.equal(button.textContent, "重新连接");
+  assert.equal(button.disabled, false);
 });
 
 // ------------------------------------------------------------

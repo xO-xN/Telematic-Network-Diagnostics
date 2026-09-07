@@ -137,7 +137,12 @@ different NATs, phones on each site's Wi-Fi.
    four-state machine checked against the server's live config:
    连接 / 连接中… / 已连接 / 重新连接 (issue #12). Or skip the form:
    set the `PNDS_HUB_*` environment variables (below) and the server
-   connects at boot.
+   connects at boot. Inside PNDS App (≥ v1.4.0) the env IS the App's
+   configuration: it prefills the form field by field over any saved
+   values and auto-connects, the room shows as the read-only derived
+   full name (`{project id}_{group}`), and a hand edit holds only for
+   that session — the next page load is the App's config again
+   (issue #15).
 
 3. **Start site B** the same way, node name `site-b`, same token and
    room. Each site's score server makes its own OUTBOUND connection to
@@ -211,8 +216,12 @@ into server logs, browser history, and proxy logs — a credential in
 the query string is copied before anyone notices. The monitor form
 follows the same rule. The four variables are App v1.3.0's frozen
 injection contract: present at boot, the server auto-connects without
-opening the monitor, and the monitor form prefills from them (a saved
-form value wins over the env default). Opening the monitor
+opening the monitor, and the monitor form prefills from them. Since
+App v1.4.0 (issue #15) the env prefills FIELD BY FIELD over any saved
+form — an old browser memory never masks the App's config; an env
+room replaces the room input with the derived full name
+(`{project id}_{group}`) shown read-only; a hand edit holds only for
+the session (the next load restores the env). Opening the monitor
 auto-starts measuring — zero buttons.
 
 ### Running the hub
@@ -354,7 +363,10 @@ npm start        # 演奏者页 http://<局域网IP>:6868/，监视端 :6869/
    token、room、节点名 `site-a`——点连接。按钮是以服务端生效配置为
    基准的四态状态机：连接 / 连接中… / 已连接 / 重新连接
    （issue #12）。也可以跳过表单：设好下面的
-   `PNDS_HUB_*` 环境变量，服务器开机即连。
+   `PNDS_HUB_*` 环境变量，服务器开机即连。在 PNDS App（≥ v1.4.0）
+   中，env 即 App 的配置：逐字段压过浏览器旧记忆预填并自动连接，
+   room 以派生全名（`{工程 id}_{分组号}`）只读展示，手改仅当次会话
+   生效——重开页面回到 App 配置（issue #15）。
 
 3. **同样启动站点 B**，节点名 `site-b`，token 与 room 相同。每个站点
    的 score server 都是自己出站连 hub——两边都不需要端口转发。
@@ -417,8 +429,11 @@ score server 经两条通道之一连接 hub；两条通道汇入同一条路径
 token 是独立的环境变量，绝不拼进 URL：URL 会泄进服务器日志、浏览器
 历史和代理日志——查询串里的凭据总在有人注意之前就被复制走。monitor
 表单遵守同一条规则。这四个变量是 App v1.3.0 冻结的注入契约：启动时存
-在即自动连接（无需打开 monitor），monitor 表单以它们预填（已保存的表单
-值优先于 env 缺省）。打开 monitor 即自动开测——零按钮。
+在即自动连接（无需打开 monitor），monitor 表单以它们预填。自 App
+v1.4.0（issue #15）起 env 逐字段优先于已保存的表单——浏览器旧记忆绝不
+静默盖住 App 的配置；env 房间在场时 room 输入框退场，改为派生全名
+（`{工程 id}_{分组号}`）的只读展示；手改仅当次会话生效（下次加载回到
+env）。打开 monitor 即自动开测——零按钮。
 
 ### 运行 hub
 

@@ -514,7 +514,8 @@ header .sub {
   min-width: 0;
 }
 
-.form-grid input {
+.form-grid input,
+.derived-room {
   font-size: 13px;
   font-family: inherit;
   width: 100%;
@@ -523,6 +524,9 @@ header .sub {
   border: 1px solid var(--track);
   border-radius: 8px;
   background: var(--bg);
+}
+
+.form-grid input {
   color: var(--text);
 }
 
@@ -530,6 +534,17 @@ header .sub {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent);
+}
+
+/* The App-present room slot (issue #15): the read-only line that
+ * replaces the room input when the App injects the derived room full
+ * name ({project id}_{group}) — the operator verifies it, never edits
+ * it. The input's quiet twin: same shape, muted, ellipsized. */
+.derived-room {
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .form-actions {

@@ -127,7 +127,7 @@
           connected: "已连接",
           reconnect: "重新连接",
           formHint:
-            "表单保存在浏览器 localStorage，重开无需重填；App 注入的 env（PNDS_HUB_URL 等）会作为预填默认值。",
+            "App 注入的 env（PNDS_HUB_URL 等）逐字段优先于浏览器记忆预填；无 App 时表单存 localStorage，重开无需重填。",
           starHint:
             "辐条 = hub 腿（标注 RTT p50，颜色 = 质量）；外环 = 本地腿（灰 = 无数据）",
           starNotConnected: "未连接 hub — 连接后显示全网星型图",
@@ -242,7 +242,7 @@
           connected: "Connected",
           reconnect: "Reconnect",
           formHint:
-            "The form persists in the browser's localStorage — no re-typing on reopen; env injected by the App (PNDS_HUB_URL, …) prefills the defaults.",
+            "The App's env (PNDS_HUB_URL, …) prefills field by field over the browser's memory; without the App the form persists in localStorage — no re-typing on reopen.",
           starHint:
             "Spokes = hub legs (RTT p50 labeled, color = quality); outer rings = local legs (gray = no data)",
           starNotConnected:
