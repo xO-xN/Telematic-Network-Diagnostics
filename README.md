@@ -199,6 +199,14 @@ deletes the same way and logs "client N 移除（monitor）"; an online
 phone is told first (`removed`) and shows 已被移出检测 until it taps
 重新加入.
 
+**The disconnected hub leg names its cause** (issue #16): instead of a
+generic outage line, the reason distinguishes three states — invalid
+hub token (fix the token in the App's node settings), node name taken
+(change the node name in the App; the mapping lands with pnds-hub's
+error string), and transport failure (hub down / network
+unreachable). Each has its own localized line; no state masquerades
+as another.
+
 ### Hub connection (env contract — frozen, App v1.3.0)
 
 The score server connects to the hub through either channel; both feed
@@ -413,6 +421,11 @@ hub + hub + 本地（本地段取该站在线演奏者中最差的 p50）。任�
 计入该腿。monitor 的「x」以相同方式删除并记
 「client N 移除（monitor）」；在线手机先收到通知（`removed`），显示
 「已被移出检测」直到点击「重新加入」。
+
+**断开的 hub 腿直呼成因**（issue #16）：原因行不再是一句笼统的断线，
+而是三态可辨——token 无效（去 App「节点」栏核对 hub token）、节点名
+被占用（去 App 改节点名；映射待 pnds-hub 错误串定稿后生效）、传输故障
+（hub 宕机 / 网络不通）。三态各有本地化文案，互不误报。
 
 ### hub 连接（env 契约——已冻结，App v1.3.0）
 

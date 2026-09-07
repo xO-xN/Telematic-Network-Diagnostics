@@ -67,10 +67,16 @@
           yellow: "临界网络，谨慎",
           red: "不适宜演出",
         },
-        // Hub-leg reasons (lib/hub-leg.js keys + params).
+        // Hub-leg reasons (lib/hub-leg.js keys + params). The three
+        // disconnected causes (#16) each name their fix: the token and
+        // the node name live in the App's node settings; transport is
+        // the hub/network itself.
         hubReasons: {
           unreachable: "hub 不可达",
           warmup: "预热中",
+          invalidToken: "token 无效——去 App「节点」栏核对 hub token",
+          nodeNameTaken: "节点名被占用——去 App 改节点名",
+          transport: "传输故障——hub 宕机或网络不通",
           reconnectsRed: "最近 {1} 秒内重连 {0} 次",
           jitterRed: "抖动（IQR）{0} ms ≥ {1} ms",
           lossRed: "丢包率 {0}% ≥ {1}%",
@@ -197,6 +203,9 @@
         hubReasons: {
           unreachable: "Hub unreachable",
           warmup: "Warming up",
+          invalidToken: "Invalid hub token — fix the token in the App's node settings",
+          nodeNameTaken: "Node name taken — change the node name in the App",
+          transport: "Transport failure — hub down or network unreachable",
           reconnectsRed: "{0} reconnects in the last {1}s",
           jitterRed: "Jitter (IQR) {0} ms ≥ {1} ms",
           lossRed: "Loss {0}% ≥ {1}%",

@@ -77,10 +77,30 @@ const ENOUGH = WARMUP_SAMPLES + 5;
 
 const QUALITY_TABLE = [
   {
-    name: "disconnected → red unreachable (priority 1)",
+    name: "disconnected → red, transport when no error observed (priority 1)",
     input: { connected: false, samples: 100, lost: 0, iqrMs: 1, lossRate: 0, reconnects: 0 },
     status: STATUS.RED,
-    reason: "unreachable",
+    reason: "transport",
+  },
+  {
+    name: "disconnected by the hub's token refusal → red, invalidToken (#16)",
+    input: {
+      connected: false,
+      connectError: "invalid hub token",
+      samples: 100, lost: 0, iqrMs: 1, lossRate: 0, reconnects: 0,
+    },
+    status: STATUS.RED,
+    reason: "invalidToken",
+  },
+  {
+    name: "disconnected with a transport-level error string → red, transport (#16)",
+    input: {
+      connected: false,
+      connectError: "xhr poll error",
+      samples: 100, lost: 0, iqrMs: 1, lossRate: 0, reconnects: 0,
+    },
+    status: STATUS.RED,
+    reason: "transport",
   },
   {
     name: "warm-up: connected, too few samples, no negative evidence → gray",
@@ -383,6 +403,40 @@ test("HubLeg: disconnect flips red immediately; reconnect counts and recovers", 
   // 1 reconnect keeps the link yellow even with good numbers.
   assert.equal(up.status, STATUS.YELLOW);
   assert.equal(up.reason, "reconnectYellow");
+});
+
+test("HubLeg: the connect_error drives the disconnected reason; a connect clears it (issue #16)", async (t) => {
+  const socket = new FakeSocket();
+  const leg = makeLeg(socket);
+
+  t.after(() => leg.stop());
+
+  leg.start();
+
+  // The hub refused the handshake (the frozen wire string, hub/hub.js):
+  // the reason names the token, not a generic outage.
+  socket.deliver("connect_error", new Error("invalid hub token"));
+
+  const refused = leg.snapshot();
+
+  assert.equal(refused.connected, false);
+  assert.equal(refused.status, STATUS.RED);
+  assert.equal(refused.reason, "invalidToken");
+
+  // A successful connect clears the refusal: a later drop reads as
+  // whatever that drop is (transport), never the stale token fault.
+  socket.deliver("connect");
+  socket.deliver("disconnect", "ping timeout");
+
+  const dropped = leg.snapshot();
+
+  assert.equal(dropped.connected, false);
+  assert.equal(dropped.reason, "transport");
+
+  // The raw diagnostics still ride the event log verbatim.
+  const failed = dropped.events.find((event) => event.type === "connect failed");
+
+  assert.equal(failed.detail, "invalid hub token");
 });
 
 test("HubLeg: the phase cycle runs automatically — burst density, calm baseline, repeating", async (t) => {

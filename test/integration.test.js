@@ -316,7 +316,9 @@ test("hub leg: env auto-connect, live stats, burst, disconnect/reconnect, form c
     8000,
   );
 
-  assert.equal(down.leg.reason, "unreachable");
+  // A killed hub is a transport-level outage (#16): the reason names
+  // the fault class, not the old generic "unreachable".
+  assert.equal(down.leg.reason, "transport");
   assert.ok(
     down.leg.events.some((event) => event.type === "disconnected"),
     "the disconnect is in the event log",
@@ -397,6 +399,99 @@ test("hub leg: env auto-connect, live stats, burst, disconnect/reconnect, form c
   assert.match(monitorJs, /autoConfig/, "auto-start uses the loaded config");
   assert.match(monitorJs, /state\.env/, "env prefill is wired");
   assert.match(monitorJs, /activeConfig/, "the connect button dirty-checks against the server's live config (#12)");
+});
+
+// ------------------------------------------------------------
+// The disconnected reason's two testable states (issue #16): the
+// hub's own token refusal vs a transport-level outage, through the
+// subprocess seams. The third state (node name taken) waits for
+// pnds-hub's error string to be finalized — see the TODO in
+// lib/hub-leg.js.
+// ------------------------------------------------------------
+
+test("hub leg: the disconnected reason distinguishes invalid token from transport (issue #16)", async (t) => {
+  await assertPortsFree([6868, 6869]);
+
+  // --- invalid token: a real hub refuses the handshake with the
+  // frozen wire string — the reason names the token, not an outage ---
+  const hubPort = await findFreePort();
+  const hub = spawnHub(hubPort, { token: "right-hub-token-0123456789" });
+  t.after(() => stopProcess(hub));
+  await waitForPort(hubPort);
+
+  const server = spawn(process.execPath, ["server.js"], {
+    cwd: PROJECT_ROOT,
+    stdio: "ignore",
+    env: {
+      ...process.env,
+      PNDS_HUB_URL: `http://127.0.0.1:${hubPort}`,
+      PNDS_HUB_TOKEN: "wrong-hub-token-0123456789",
+      PNDS_HUB_ROOM: "rehearsal",
+      PNDS_NODE_ID: "site-wrong-token",
+    },
+  });
+  t.after(async () => stopProcess(server));
+
+  await waitForHealthReady();
+
+  const monitor = await connectMonitor();
+  t.after(() => monitor.close());
+
+  const refused = await waitForState(
+    monitor,
+    (state) =>
+      state.leg &&
+      !state.leg.connected &&
+      state.leg.status === "red" &&
+      state.leg.reason === "invalidToken",
+    15000,
+  );
+
+  assert.equal(refused.leg.everConnected, false, "it never got in");
+  assert.ok(
+    refused.leg.events.some(
+      (event) => event.type === "connect failed" && event.detail === "invalid hub token",
+    ),
+    "the raw refusal rides the event log verbatim",
+  );
+
+  // --- transport: nothing listens at the configured URL at all ---
+  await stopProcess(server);
+
+  const deadPort = await findFreePort();
+  const serverDead = spawn(process.execPath, ["server.js"], {
+    cwd: PROJECT_ROOT,
+    stdio: "ignore",
+    env: {
+      ...process.env,
+      PNDS_HUB_URL: `http://127.0.0.1:${deadPort}`,
+      PNDS_HUB_TOKEN: "any-hub-token-0123456789ab",
+      PNDS_HUB_ROOM: "rehearsal",
+      PNDS_NODE_ID: "site-dead-url",
+    },
+  });
+  t.after(async () => stopProcess(serverDead));
+
+  await waitForHealthReady();
+
+  const monitorDead = await connectMonitor();
+  t.after(() => monitorDead.close());
+
+  const dead = await waitForState(
+    monitorDead,
+    (state) =>
+      state.leg &&
+      !state.leg.connected &&
+      state.leg.status === "red" &&
+      state.leg.reason === "transport",
+    15000,
+  );
+
+  assert.equal(dead.leg.everConnected, false);
+  assert.ok(
+    dead.leg.events.some((event) => event.type === "connect failed"),
+    "the failed attempts are logged (raw diagnostics verbatim)",
+  );
 });
 
 // ------------------------------------------------------------
