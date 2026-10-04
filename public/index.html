@@ -15,7 +15,7 @@
       document.write(
         '\x3Cscript src="http://' +
           location.hostname +
-          ':' +
+          ":" +
           window.PNDS.performerPort +
           '/socket.io/socket.io.js"\x3E\x3C/script\x3E',
       );
@@ -37,6 +37,12 @@
         // by the module itself) — the options global must exist before
         // the module loads.
         window.PNDS_THEME_OPTIONS = {
+          onTheme: function (name) {
+            document.documentElement.setAttribute(
+              "data-utility-theme",
+              name || "",
+            );
+          },
           derive: function (palette) {
             return window.PNDS_THEME.statusVariables(palette);
           },

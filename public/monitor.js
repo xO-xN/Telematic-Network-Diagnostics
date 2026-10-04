@@ -2,28 +2,12 @@
 //
 // The flower view: the WHOLE network's picture, identical on every
 // site's monitor (each node self-reports over the hub room relay).
-// Layout in the Local Network Diagnostics visual language:
-//
-//   overall banner  — worst leg across all nodes, hub AND local →
-//                     green/yellow/red "suitable for performance"
-//                     verdict + plain attribution ("问题在 B 站本地腿")
-//   star diagram    — hub centered, nodes ringed; spokes carry each
-//                     node's self-reported RTT p50 (number only) and
-//                     quality color; outer rings carry the site's
-//                     local-leg worst; own node marked 本站; offline
-//                     spokes dashed. Pure inline SVG.
-//   local panel     — THIS site's performers: per-performer status,
-//                     metrics and event log (the local legs, #5)
-//   node cards      — per node: quality + reason, hub-leg p50/p95,
-//                     performer count, and the DERIVED end-to-end
-//                     numbers (site pair = two hub legs; performer
-//                     pair = local + hub + hub + local; big number,
-//                     small composition formula)
-//   form + log + QR — the #3 connect form (issue #15's App-present
-//                     shape: env wins per field, the App-derived room
-//                     shows read-only), hub-leg event log, performer QR
-//
-// RTT numbers are never colored anywhere — only quality is.
+// Instrument panel layout shared with Local Diagnostics: verdict and
+// fault attribution above the hub/star diagram and connection settings;
+// per-site readings below, followed by this site's performer cards.
+// The diagram, quality coloring and derived segment sums stay driven by
+// server truth. Hub RTT readings remain neutral: high stable latency does
+// not imply poor quality. Native disclosures hold event history and QR.
 //
 // All copy renders through the shared bilingual tables (shared.js
 // `copy`), picked by the current locale (locale-follow.js follows the
@@ -40,70 +24,49 @@ const app = document.getElementById("app");
 // The skeleton is built once; every label-carrying node gets an id so
 // render() can re-word the chrome without touching the form inputs (a
 // language switch must never wipe what the operator is typing).
-app.innerHTML =
-  "<header>" +
-  "<h1>Telematic Network Diagnostics</h1>" +
-  '<span class="sub" id="sub-label"></span>' +
-  "</header>" +
-  '<div class="overall st-idle" id="banner">' +
-  '<span class="dot"></span>' +
-  '<span class="overall-label" id="overall-label"></span>' +
-  '<span class="overall-copy" id="banner-copy">…</span>' +
-  '<span class="attribution" id="banner-attribution"></span>' +
-  "</div>" +
-  // Compact three-column top row — everything the operator watches at
-  // once, no scrolling: connection form (2×2), star diagram, and the
-  // hub-leg cards (own + peers) as a column. Stacks on narrow screens.
-  '<div class="top-grid">' +
-  '<div class="panel" id="form-panel">' +
-  '<h3 id="form-title"></h3>' +
-  '<div class="form-grid">' +
-  '<label><span id="l-url"></span><input id="f-url" placeholder="wss://hub.example.com" /></label>' +
-  '<label><span id="l-token"></span><input id="f-token" type="password" placeholder="HUB_TOKEN" /></label>' +
-  // The room slot carries BOTH shapes (issue #15): the hand-fill input
-  // for standalone use, and the read-only line that replaces it when
-  // the App injects the derived room full name ({project id}_{group}).
-  '<label><span id="l-room"></span><input id="f-room" placeholder="default" /><span class="derived-room hidden" id="f-room-derived"></span></label>' +
-  '<label><span id="l-node"></span><input id="f-node" placeholder="site name" /></label>' +
-  "</div>" +
-  '<div class="form-actions">' +
-  '<button id="b-connect"></button>' +
-  "</div>" +
-  '<div class="hint" id="form-hint"></div>' +
-  "</div>" +
-  '<div class="panel star-panel" id="star-panel">' +
-  '<div id="star"></div>' +
-  '<div class="hint" id="star-hint"></div>' +
-  "</div>" +
-  // Third column: the hub-leg cards, with the event log tucked under
-  // them — the column is otherwise shorter than the star, so the log
-  // fills existing space instead of adding a whole row to the page.
-  '<div class="cards-col">' +
-  '<div id="cards"></div>' +
-  '<div class="panel" id="log-panel">' +
-  "<h3 id=\"log-title\"></h3>" +
-  '<div class="log" id="log"></div>' +
-  "</div>" +
-  "</div>" +
-  "</div>" +
-  '<div class="panel wide" id="local-panel">' +
-  '<h3><span id="local-title"></span> <span class="count" id="local-count"></span></h3>' +
-  // Cards left, the join QR at the row's end — scan-sized (96px), its
-  // height absorbed by the performer cards beside it.
-  '<div class="local-row">' +
-  '<div class="local-cards" id="local-cards"></div>' +
-  '<div class="qr-inline">' +
-  '<img src="/qr" id="qr-img" alt="" />' +
-  '<span class="sub" id="scan-label"></span>' +
-  "</div>" +
-  "</div>" +
-  "</div>";
+app.innerHTML = `
+  <div class="brand">
+    <svg viewBox="0 0 28 20" fill="none" aria-hidden="true"><path d="M14 4v12M4 10h20M6 3l16 14M6 17L22 3" stroke="currentColor" stroke-width="1.5"/><circle cx="14" cy="10" r="4" fill="var(--bg)" stroke="currentColor" stroke-width="1.5"/></svg><span>PNDS UTILITY</span>
+  </div>
+  <header><div><h1>Telematic Diagnostics</h1><p class="sub" id="sub-label"></p></div>
+    <div class="activity"><span class="activity-value" id="site-count">00</span><span class="activity-label" id="sites-label"></span></div>
+  </header>
+  <section class="panel network-panel" aria-labelledby="overall-label">
+    <div class="overall st-idle" id="banner">
+      <div class="verdict"><span class="overall-label"><span class="dot on" aria-hidden="true"></span><span id="overall-label"></span></span>
+        <p class="overall-copy" id="banner-copy" role="status"></p></div>
+      <p class="attribution" id="banner-attribution"></p>
+    </div>
+    <div class="top-grid">
+      <div class="star-panel" id="star-panel"><h2 id="network-title"></h2><div id="star"></div><p class="hint" id="star-hint"></p></div>
+      <div id="form-panel"><h2 id="form-title"></h2>
+        <div class="form-grid">
+          <label><span id="l-url"></span><input id="f-url" placeholder="wss://hub.example.com" spellcheck="false" autocapitalize="off" /></label>
+          <label><span id="l-token"></span><input id="f-token" type="password" placeholder="HUB_TOKEN" /></label>
+          <label><span id="l-room"></span><input id="f-room" placeholder="default" spellcheck="false" autocapitalize="off" /><span class="derived-room hidden" id="f-room-derived"></span></label>
+          <label><span id="l-node"></span><input id="f-node" placeholder="site name" /></label>
+        </div>
+        <div class="form-actions"><button type="button" id="b-connect"></button></div>
+        <p class="hint" id="form-hint"></p>
+        <details class="connection-log"><summary id="log-title"></summary><div class="log" id="log"></div></details>
+      </div>
+    </div>
+    <div class="site-readings"><div class="section-head"><h2 id="readings-title"></h2><span class="section-note" id="readings-note"></span></div><div id="cards"></div></div>
+  </section>
+  <section class="panel local-panel" id="local-panel" aria-labelledby="local-title">
+    <div class="section-head"><h2><span id="local-title" tabindex="-1"></span> <span class="count" id="local-count"></span></h2><span class="section-note" id="local-note"></span></div>
+    <div class="local-cards" id="local-cards"></div>
+  </section>
+  <footer><p class="hint" id="footer-hint"></p><details class="remote"><summary><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="4.5" y="1.5" width="7" height="13" rx="1.5" stroke="currentColor"/><path d="M7 12h2" stroke="currentColor"/></svg><span id="join-label"></span></summary><div class="qr-row"><img src="/qr" id="qr-img" alt=""/><span id="scan-label"></span></div></details></footer>`;
 
 const bannerEl = document.getElementById("banner");
 const bannerCopyEl = document.getElementById("banner-copy");
 const bannerAttributionEl = document.getElementById("banner-attribution");
 const starEl = document.getElementById("star");
 const localCardsEl = document.getElementById("local-cards");
+const performerCards = new Map();
+const localEmpty = el("p", "empty-local");
+const localEvents = el("div", "events-line site-events");
 const localCountEl = document.getElementById("local-count");
 const cardsEl = document.getElementById("cards");
 const urlInput = document.getElementById("f-url");
@@ -294,8 +257,7 @@ function formMatchesActive(active) {
     tokenInput.value.trim() === active.token &&
     (roomInput.value.trim() === active.room ||
       (roomInput.value.trim() === "" && active.room === P.defaultRoom)) &&
-    (nodeInput.value.trim() === active.nodeId ||
-      nodeInput.value.trim() === "")
+    (nodeInput.value.trim() === active.nodeId || nodeInput.value.trim() === "")
   );
 }
 
@@ -382,6 +344,24 @@ function render() {
   chromeEls.scan.textContent = m.scan;
   chromeEls.qrImg.setAttribute("alt", m.qrAlt);
 
+  for (const [id, value] of Object.entries({
+    "sites-label": m.sites,
+    "network-title": m.networkTitle,
+    "readings-title": m.readingsTitle,
+    "readings-note": m.readingsNote,
+    "local-note": m.localNote,
+    "join-label": m.join,
+    "footer-hint": m.footerHint,
+  }))
+    document.getElementById(id).textContent = value;
+  const info = leg();
+  const onlineSites = info
+    ? Number(Boolean(info.connected)) +
+      sortedPeers(info).filter(([, peer]) => peer.connected).length
+    : 0;
+  document.getElementById("site-count").textContent = String(
+    onlineSites,
+  ).padStart(2, "0");
   renderBanner();
   renderStar();
   renderLocal();
@@ -477,6 +457,8 @@ function renderStar() {
     viewBox: "0 0 " + size + " " + size,
   });
   svg.setAttribute("class", "star-svg");
+  svg.setAttribute("role", "img");
+  svg.setAttribute("aria-label", T().monitor.starHint);
 
   // Hub first (spokes draw over it).
   const hubCore = svgEl("circle", { cx: center, cy: center, r: 15 });
@@ -510,7 +492,7 @@ function renderStar() {
     const label = svgText(
       (center + x) / 2,
       (center + y) / 2 - 7,
-      node.connected && typeof node.p50 === "number"
+      node.connected && Number.isFinite(node.p50)
         ? Math.round(node.p50) + " ms"
         : "—",
       "spoke-label",
@@ -522,7 +504,10 @@ function renderStar() {
     // Node: outer ring = the site's local-leg worst (gray = no data),
     // inner dot = hub-leg quality.
     const ring = svgEl("circle", { cx: x, cy: y, r: 17 });
-    ring.setAttribute("class", "node-ring " + statusClass(node.localWorst || "gray"));
+    ring.setAttribute(
+      "class",
+      "node-ring " + statusClass(node.localWorst || "gray"),
+    );
     const core = svgEl("circle", { cx: x, cy: y, r: 8 });
     core.setAttribute("class", "node-core " + statusClass(node.status));
     svg.append(ring, core);
@@ -572,9 +557,9 @@ function renderOwnCard(name, info) {
     // Name only — no card carries a phase marker (#11); probing stays
     // on the wire, it just has nothing to paint (see the note above
     // renderPerformerCard for why).
-    el("span", null, name),
+    el("span", "node-name-label", name),
     el("span", "tag", t.monitor.selfTag),
-    el("span", "status-word", info.status.toUpperCase()),
+    el("span", "status-word", statusWord(info.status)),
   );
   card.append(
     head,
@@ -596,7 +581,10 @@ function renderOwnCard(name, info) {
     metricRow(t.monitor.jitterIqr, formatMs(summary.iqrMs, 1)),
     metricRow(t.monitor.loss, formatPct(summary.lossRate)),
     metricRow(t.monitor.performers, String(local ? local.performers : 0)),
-    metricRow(t.monitor.localLeg, localStatus || t.monitor.noData),
+    metricRow(
+      t.monitor.localLeg,
+      localStatus ? statusWord(localStatus) : t.monitor.noData,
+    ),
   );
   card.append(rows);
 
@@ -611,8 +599,8 @@ function renderPeerCard(nodeId, peer, own) {
 
   head.append(
     el("span", "dot on"),
-    el("span", null, nodeId),
-    el("span", "status-word", status.toUpperCase()),
+    el("span", "node-name-label", nodeId),
+    el("span", "status-word", statusWord(status)),
   );
   card.append(
     head,
@@ -648,14 +636,24 @@ function renderPeerCard(nodeId, peer, own) {
       el(
         "div",
         "formula",
-        ownName() + " → " + nodeId + " · " +
-          Math.round(ownP50) + " + " + Math.round(peerP50) + " ms",
+        ownName() +
+          " → " +
+          nodeId +
+          " · " +
+          Math.round(ownP50) +
+          " + " +
+          Math.round(peerP50) +
+          " ms",
       ),
     );
   } else {
     siteBlock.append(
       el("div", "big", "—"),
-      el("div", "formula", peer.connected ? t.monitor.waitSite : t.monitor.peerUnreachable),
+      el(
+        "div",
+        "formula",
+        peer.connected ? t.monitor.waitSite : t.monitor.peerUnreachable,
+      ),
     );
   }
 
@@ -681,16 +679,32 @@ function renderPeerCard(nodeId, peer, own) {
       el(
         "div",
         "formula",
-        t.monitor.segLocal + " " + Math.round(ownLocalP50) +
-          " + " + t.monitor.segHub + " " + Math.round(ownP50) +
-          " + " + t.monitor.segHub + " " + Math.round(peerP50) +
-          " + " + t.monitor.segLocal + " " + Math.round(peerLocalP50) + " ms",
+        t.monitor.segLocal +
+          " " +
+          Math.round(ownLocalP50) +
+          " + " +
+          t.monitor.segHub +
+          " " +
+          Math.round(ownP50) +
+          " + " +
+          t.monitor.segHub +
+          " " +
+          Math.round(peerP50) +
+          " + " +
+          t.monitor.segLocal +
+          " " +
+          Math.round(peerLocalP50) +
+          " ms",
       ),
     );
   } else {
     perfBlock.append(
       el("div", "big", "—"),
-      el("div", "formula", peer.connected ? t.monitor.waitPerf : t.monitor.peerUnreachable),
+      el(
+        "div",
+        "formula",
+        peer.connected ? t.monitor.waitPerf : t.monitor.peerUnreachable,
+      ),
     );
   }
 
@@ -701,10 +715,15 @@ function renderPeerCard(nodeId, peer, own) {
   rows.append(
     metricRow(t.monitor.rttP50, formatMs(summary.rttP50)),
     metricRow(t.monitor.rttP95, formatMs(summary.rttP95)),
-    metricRow(t.monitor.performers, String(peer.local ? peer.local.performers : 0)),
+    metricRow(
+      t.monitor.performers,
+      String(peer.local ? peer.local.performers : 0),
+    ),
     metricRow(
       t.monitor.localLeg,
-      (peer.local && peer.local.status) || t.monitor.noData,
+      peer.local && peer.local.status
+        ? statusWord(peer.local.status)
+        : t.monitor.noData,
     ),
   );
   card.append(rows);
@@ -719,40 +738,44 @@ function renderPeerCard(nodeId, peer, own) {
 // or the monitor's「x」#13 — deletes the card, so the trail lives here
 // instead) render as one muted line under the cards.
 function renderLocal() {
-  localCardsEl.textContent = "";
-
   const local = localState();
-
-  if (!local) {
-    return;
-  }
-
-  const entries = Object.entries(local.clients || {}).sort(
+  const entries = Object.entries(local?.clients || {}).sort(
     ([a], [b]) => Number(a) - Number(b),
   );
-
-  localCountEl.textContent =
-    entries.length > 0 ? fmt(T().monitor.countOnline, [local.performers]) : "";
-
-  if (entries.length === 0) {
-    localCardsEl.append(el("div", "hint", T().monitor.emptyLocal));
-  } else {
-    for (const [id, client] of entries) {
-      localCardsEl.append(renderPerformerCard(id, client));
+  const ids = new Set(entries.map(([id]) => id));
+  for (const [id, card] of performerCards) {
+    if (!ids.has(id)) {
+      const wasFocused = card.contains(document.activeElement);
+      card.remove();
+      performerCards.delete(id);
+      if (wasFocused) document.getElementById("local-title").focus();
     }
   }
-
-  const siteEvents = local.events || [];
-
-  if (siteEvents.length > 0) {
-    localCardsEl.append(
-      el(
-        "div",
-        "events-line site-events",
-        eventsLineText(siteEvents, localEventLabel),
-      ),
-    );
-  }
+  localCountEl.textContent =
+    entries.length > 0 ? fmt(T().monitor.countOnline, [local.performers]) : "";
+  localEmpty.textContent = T().monitor.emptyLocal;
+  if (entries.length === 0) {
+    if (!localEmpty.parentNode) localCardsEl.append(localEmpty);
+  } else localEmpty.remove();
+  entries.forEach(([id, client], index) => {
+    let card = performerCards.get(id);
+    if (!card) {
+      card = renderPerformerCard(id, client);
+      performerCards.set(id, card);
+    } else {
+      updatePerformerCard(card, id, client);
+    }
+    const position = localCardsEl.children[index];
+    if (position !== card) localCardsEl.insertBefore(card, position || null);
+  });
+  // Empty copy and site trail live after the keyed cards, never inside one.
+  localEvents.textContent = eventsLineText(
+    local?.events || [],
+    localEventLabel,
+  );
+  if (local?.events?.length) {
+    if (!localEvents.parentNode) localCardsEl.append(localEvents);
+  } else localEvents.remove();
 }
 
 // The compact "label · ago" trail the performer cards and the
@@ -770,62 +793,58 @@ function eventsLineText(events, labelFor) {
 // phase marker would only flicker every 2 s — and the phase itself is
 // the measurement's business, not the operator's.
 function renderPerformerCard(id, client) {
-  const t = T();
-  const card = el("div", "client-card " + statusClass(client.status));
+  const card = el("div", "client-card");
   const head = el("div", "head");
-  // The corner「x」(issue #13): every performer card is deletable —
-  // online or disconnected, single tap, no confirmation. The server
-  // runs the same deletion as a voluntary exit; for an online client
-  // it also notifies the phone (`removed`) before kicking its socket.
-  const removeButton = el("button", "remove-btn", "✕");
-
-  removeButton.setAttribute("aria-label", t.monitor.remove);
-  removeButton.addEventListener("click", () => {
-    socket.emit(P.events.remove, { id: Number(id) });
-  });
-
+  const removeButton = el("button", "remove-btn", "×");
+  removeButton.type = "button";
+  removeButton.addEventListener("click", () =>
+    socket.emit(P.events.remove, { id: Number(id) }),
+  );
   head.append(
     el("span", "dot on"),
-    el("span", null, fmt(t.monitor.performer, [id])),
-    el("span", "status-word", client.status.toUpperCase()),
+    el("span", "client-name"),
+    el("span", "status-word"),
     removeButton,
   );
   card.append(
     head,
-    el("div", "copy", t.localStatus[client.status] || ""),
-    el(
-      "div",
-      "reason",
-      client.connected
-        ? reasonLine(client.reason, null, t.localReasons)
-        : reasonLine("disconnected", null, t.localReasons),
-    ),
+    el("div", "copy"),
+    el("div", "reason"),
+    el("div", "rows"),
+    el("div", "events-line"),
   );
+  card.setAttribute("data-client-id", id);
+  updatePerformerCard(card, id, client);
+  return card;
+}
 
+function updatePerformerCard(card, id, client) {
+  const t = T();
+  const [head, copy, reason, rows, events] = card.children;
+  card.className = "client-card " + statusClass(client.status);
+  head.children[1].textContent = fmt(t.monitor.performer, [id]);
+  head.children[2].textContent = client.connected
+    ? statusWord(client.status)
+    : t.monitor.offline;
+  head.children[3].setAttribute("aria-label", t.monitor.remove);
+  copy.textContent = t.localStatus[client.status] || "";
+  reason.textContent = reasonLine(
+    client.connected ? client.reason : "disconnected",
+    null,
+    t.localReasons,
+  );
   const metrics = client.metrics || {};
-  const rows = el("div", "rows");
-
+  rows.textContent = "";
   rows.append(
     metricRow(t.monitor.rttP50, formatMs(metrics.rttP50)),
     metricRow(t.monitor.rttP95, formatMs(metrics.rttP95)),
     metricRow(t.monitor.jitterP95, formatMs(metrics.jitterP95)),
     metricRow(t.monitor.loss, formatPct(metrics.lossRate)),
   );
-  card.append(rows);
-
-  // Last three events: the full connected → disconnected → reconnected
-  // story fits on one compact line.
-  if ((client.events || []).length > 0) {
-    card.append(
-      el(
-        "div",
-        "events-line",
-        eventsLineText(client.events, (event) => eventLabel(event.type)),
-      ),
-    );
-  }
-
-  return card;
+  events.textContent = eventsLineText(client.events || [], (event) =>
+    eventLabel(event.type),
+  );
+  events.hidden = !client.events?.length;
 }
 
 function renderLog() {
@@ -848,7 +867,8 @@ function renderLog() {
       type,
       document.createTextNode(
         (event.detail ? " — " + detailText(event.detail) : "") +
-          "  ·  " + agoText(event.agoMs),
+          "  ·  " +
+          agoText(event.agoMs),
       ),
     );
     logEl.append(entry);
@@ -893,20 +913,22 @@ function metricRow(label, value) {
   return row;
 }
 
+function statusWord(status) {
+  return T().monitor.statusWord[status] || status || T().monitor.noData;
+}
+
 function formatMs(value, digits = 0) {
-  return typeof value === "number" ? value.toFixed(digits) + " ms" : "—";
+  return Number.isFinite(value) ? value.toFixed(digits) + " ms" : "—";
 }
 
 function formatPct(value) {
-  return typeof value === "number" ? (value * 100).toFixed(1) + "%" : "—";
+  return Number.isFinite(value) ? (value * 100).toFixed(1) + "%" : "—";
 }
 
 function eventLabel(type) {
   const t = T();
 
-  return (
-    t.events[type] || type.charAt(0).toUpperCase() + type.slice(1)
-  );
+  return t.events[type] || type.charAt(0).toUpperCase() + type.slice(1);
 }
 
 // Site-level local events name their client: the copy template carries

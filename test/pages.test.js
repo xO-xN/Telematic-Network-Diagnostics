@@ -15,9 +15,10 @@ const ROOT_DIR = path.join(__dirname, "..");
 // A DOM node stub: id-addressed (pages build markup via innerHTML
 // strings and then getElementById — the stub mirrors that contract,
 // not a tree).
-function makeNode(tag) {
+function makeNode(tag, document) {
   const node = {
     tagName: tag,
+    parentNode: null,
     children: [],
     attributes: {},
     listeners: {},
@@ -53,7 +54,34 @@ function makeNode(tag) {
       node.attributes[name] = String(value);
     },
     append(...kids) {
-      node.children.push(...kids.filter(Boolean));
+      for (const kid of kids.filter(Boolean)) {
+        if (kid.remove) kid.remove();
+        kid.parentNode = node;
+        node.children.push(kid);
+      }
+    },
+    insertBefore(kid, before) {
+      kid.remove();
+      const index = before
+        ? node.children.indexOf(before)
+        : node.children.length;
+      node.children.splice(index, 0, kid);
+      kid.parentNode = node;
+    },
+    remove() {
+      if (node.parentNode) {
+        const siblings = node.parentNode.children;
+        siblings.splice(siblings.indexOf(node), 1);
+        node.parentNode = null;
+      }
+    },
+    contains(target) {
+      return (
+        node === target || node.children.some((kid) => kid.contains?.(target))
+      );
+    },
+    focus() {
+      document.activeElement = node;
     },
     addEventListener(type, handler) {
       (node.listeners[type] = node.listeners[type] || []).push(handler);
@@ -62,13 +90,14 @@ function makeNode(tag) {
 
   Object.defineProperty(node, "textContent", {
     get() {
-      return node.children
-        .map((kid) => kid.text || "")
-        .join("");
+      return node.children.map((kid) => kid.text || "").join("");
     },
     set(text) {
       const value = String(text);
-      node.children = value === "" ? [] : [{ text: value }];
+      node.children.forEach((kid) => {
+        kid.parentNode = null;
+      });
+      node.children = value === "" ? [] : [{ text: value, parentNode: node }];
     },
   });
 
@@ -78,9 +107,7 @@ function makeNode(tag) {
       return [...node.classList.set].join(" ");
     },
     set(value) {
-      node.classList.set = new Set(
-        String(value).split(/\s+/).filter(Boolean),
-      );
+      node.classList.set = new Set(String(value).split(/\s+/).filter(Boolean));
     },
   });
 
@@ -101,16 +128,17 @@ function click(node) {
 function loadPage(file, { localeSearch } = {}) {
   const ids = new Map();
   const document = {
-    createElement: (tag) => makeNode(tag),
-    createElementNS: (ns, tag) => makeNode(tag),
+    createElement: (tag) => makeNode(tag, document),
+    createElementNS: (ns, tag) => makeNode(tag, document),
     createTextNode: (text) => ({ text: String(text) }),
     getElementById: (id) => {
       if (!ids.has(id)) {
-        ids.set(id, makeNode("div"));
+        ids.set(id, makeNode("div", document));
       }
       return ids.get(id);
     },
-    documentElement: { lang: "zh-CN" },
+    activeElement: null,
+    documentElement: makeNode("html"),
   };
 
   const socket = {
@@ -151,7 +179,8 @@ function loadPage(file, { localeSearch } = {}) {
 
   sandbox.storage = new Map();
   sandbox.localStorage = {
-    getItem: (key) => (sandbox.storage.has(key) ? sandbox.storage.get(key) : null),
+    getItem: (key) =>
+      sandbox.storage.has(key) ? sandbox.storage.get(key) : null,
     setItem: (key, value) => sandbox.storage.set(key, String(value)),
   };
   sandbox.self = sandbox;
@@ -183,7 +212,9 @@ function loadPage(file, { localeSearch } = {}) {
 
 function deliver(socket, sandbox, event, payload) {
   for (const handler of socket.listeners[event] || []) {
-    handler(payload === undefined ? undefined : JSON.parse(JSON.stringify(payload)));
+    handler(
+      payload === undefined ? undefined : JSON.parse(JSON.stringify(payload)),
+    );
   }
 }
 
@@ -208,8 +239,14 @@ function sampleState() {
       reasonParams: [],
       local: { status: "green", p50: 1, performers: 1 },
       summary: {
-        samples: 20, lost: 0, reconnects: 0, rttP50: 12.5, rttP95: 20,
-        iqrMs: 1, lossRate: 0, oneWayEstimateMs: 6.3,
+        samples: 20,
+        lost: 0,
+        reconnects: 0,
+        rttP50: 12.5,
+        rttP95: 20,
+        iqrMs: 1,
+        lossRate: 0,
+        oneWayEstimateMs: 6.3,
       },
       peers: {
         "site-b": {
@@ -219,8 +256,14 @@ function sampleState() {
           reason: "jitterYellow",
           reasonParams: ["12.0", "10"],
           summary: {
-            samples: 18, lost: 0, reconnects: 0, rttP50: 40, rttP95: 60,
-            iqrMs: 12, lossRate: 0, oneWayEstimateMs: 20,
+            samples: 18,
+            lost: 0,
+            reconnects: 0,
+            rttP50: 40,
+            rttP95: 60,
+            iqrMs: 12,
+            lossRate: 0,
+            oneWayEstimateMs: 20,
           },
           local: { status: "red", p50: 8, performers: 2 },
           agoMs: 300,
@@ -234,7 +277,7 @@ function sampleState() {
       p50: 1,
       performers: 1,
       clients: {
-        "1": {
+        1: {
           status: "green",
           reason: "green",
           connected: true,
@@ -245,9 +288,17 @@ function sampleState() {
             { type: "reconnected", at: 3, agoMs: 2000 },
           ],
           metrics: {
-            rttP50: 1, rttP95: 2, jitterP95: 0, lastRtt: 1,
-            lastProcessingMs: 1, timeouts: 0, consecutiveTimeouts: 0,
-            samples: 10, acks: 10, lossRate: 0, burstTimeoutRate: 0,
+            rttP50: 1,
+            rttP95: 2,
+            jitterP95: 0,
+            lastRtt: 1,
+            lastProcessingMs: 1,
+            timeouts: 0,
+            consecutiveTimeouts: 0,
+            samples: 10,
+            acks: 10,
+            lossRate: 0,
+            burstTimeoutRate: 0,
           },
         },
       },
@@ -270,7 +321,12 @@ test("monitor page: renders the full flower picture without throwing", () => {
 
   // The script's own initial render (state null) must not throw —
   // banner idle, star hint, empty local panel.
-  deliver(page.socket, page.sandbox, page.sandbox.PNDS.events.state, sampleState());
+  deliver(
+    page.socket,
+    page.sandbox,
+    page.sandbox.PNDS.events.state,
+    sampleState(),
+  );
 
   assert.equal(page.document.getElementById("f-url").value, "");
   assert.ok(
@@ -392,7 +448,11 @@ test("monitor page: the env prefill wins over a saved form, per field (issue #15
   const auto = page.socket.emitted.filter(([event]) => event === "hub:config");
 
   assert.equal(auto.length, 1);
-  assert.equal(auto[0][1].url, "http://env-hub", "auto-submit uses the env values");
+  assert.equal(
+    auto[0][1].url,
+    "http://env-hub",
+    "auto-submit uses the env values",
+  );
 
   // Per field: env carries ONLY the url — the saved values fill the rest.
   const partial = loadPage("monitor.js");
@@ -410,19 +470,36 @@ test("monitor page: the env prefill wins over a saved form, per field (issue #15
     hubRoom: "",
     nodeId: "",
   };
-  deliver(partial.socket, partial.sandbox, partial.sandbox.PNDS.events.state, partialState);
+  deliver(
+    partial.socket,
+    partial.sandbox,
+    partial.sandbox.PNDS.events.state,
+    partialState,
+  );
 
-  assert.equal(partial.document.getElementById("f-url").value, "http://env-hub");
+  assert.equal(
+    partial.document.getElementById("f-url").value,
+    "http://env-hub",
+  );
   assert.equal(partial.document.getElementById("f-token").value, "saved-token");
 });
 
 test("monitor page: both sources empty keeps the form empty — nothing auto-submits", () => {
   const page = loadPage("monitor.js");
 
-  deliver(page.socket, page.sandbox, page.sandbox.PNDS.events.state, sampleState());
+  deliver(
+    page.socket,
+    page.sandbox,
+    page.sandbox.PNDS.events.state,
+    sampleState(),
+  );
 
   for (const id of ["f-url", "f-token", "f-room", "f-node"]) {
-    assert.equal(page.document.getElementById(id).value, "", `${id} stays empty`);
+    assert.equal(
+      page.document.getElementById(id).value,
+      "",
+      `${id} stays empty`,
+    );
   }
 
   assert.equal(
@@ -457,7 +534,11 @@ test("monitor page: a manual edit is session-only — the next load restores the
 
   const saved = first.sandbox.localStorage.getItem("tnd-hub-config");
 
-  assert.equal(JSON.parse(saved).nodeId, "my-adhoc-node", "the manual attempt saved to localStorage");
+  assert.equal(
+    JSON.parse(saved).nodeId,
+    "my-adhoc-node",
+    "the manual attempt saved to localStorage",
+  );
 
   // The next load: the same browser memory, the same env — the env wins.
   const second = loadPage("monitor.js");
@@ -467,15 +548,30 @@ test("monitor page: a manual edit is session-only — the next load restores the
   const stateAgain = sampleState();
 
   stateAgain.env = env;
-  deliver(second.socket, second.sandbox, second.sandbox.PNDS.events.state, stateAgain);
+  deliver(
+    second.socket,
+    second.sandbox,
+    second.sandbox.PNDS.events.state,
+    stateAgain,
+  );
 
-  assert.equal(second.document.getElementById("f-node").value, "env-node", "back to the App config");
+  assert.equal(
+    second.document.getElementById("f-node").value,
+    "env-node",
+    "back to the App config",
+  );
   assert.equal(second.document.getElementById("f-url").value, "http://env-hub");
 
-  const auto = second.socket.emitted.filter(([event]) => event === "hub:config");
+  const auto = second.socket.emitted.filter(
+    ([event]) => event === "hub:config",
+  );
 
   assert.equal(auto.length, 1);
-  assert.equal(auto[0][1].nodeId, "env-node", "auto-submit is the env config again");
+  assert.equal(
+    auto[0][1].nodeId,
+    "env-node",
+    "auto-submit is the env config again",
+  );
 });
 
 test("monitor page: a manual edit survives a mid-session socket reconnect", () => {
@@ -540,7 +636,11 @@ test("monitor page: an env room replaces the input with the derived full name (i
   const auto = page.socket.emitted.filter(([event]) => event === "hub:config");
 
   assert.equal(auto.length, 1);
-  assert.equal(auto[0][1].room, derivedRoom, "the connection carries the derived room verbatim");
+  assert.equal(
+    auto[0][1].room,
+    derivedRoom,
+    "the connection carries the derived room verbatim",
+  );
 
   // Without an env room the hand-filled behavior is unchanged (story 4):
   // the input stays, the saved room prefills it, nothing else appears.
@@ -551,7 +651,11 @@ test("monitor page: an env room replaces the input with the derived full name (i
 
   solo.sandbox.localStorage.setItem(
     "tnd-hub-config",
-    JSON.stringify({ url: "http://saved", token: "saved-token", room: "my-room" }),
+    JSON.stringify({
+      url: "http://saved",
+      token: "saved-token",
+      room: "my-room",
+    }),
   );
 
   const soloState = sampleState();
@@ -562,13 +666,25 @@ test("monitor page: an env room replaces the input with the derived full name (i
   const soloInput = solo.document.getElementById("f-room");
   const soloDerived = solo.document.getElementById("f-room-derived");
 
-  assert.ok(!soloInput.classList.contains("hidden"), "no App → the room input stays");
+  assert.ok(
+    !soloInput.classList.contains("hidden"),
+    "no App → the room input stays",
+  );
   assert.equal(soloInput.value, "my-room");
-  assert.ok(soloDerived.classList.contains("hidden"), "no derived display without the App");
+  assert.ok(
+    soloDerived.classList.contains("hidden"),
+    "no derived display without the App",
+  );
 
-  const soloAuto = solo.socket.emitted.filter(([event]) => event === "hub:config");
+  const soloAuto = solo.socket.emitted.filter(
+    ([event]) => event === "hub:config",
+  );
 
-  assert.equal(soloAuto.length, 1, "the saved config auto-submits without any env");
+  assert.equal(
+    soloAuto.length,
+    1,
+    "the saved config auto-submits without any env",
+  );
   assert.equal(soloAuto[0][1].url, "http://saved");
   assert.equal(soloAuto[0][1].room, "my-room");
 });
@@ -736,12 +852,29 @@ const LOCALE_MESSAGE = (locale) => ({
 test("monitor page: renders Chinese by default, before any bridge traffic", () => {
   const page = loadPage("monitor.js", { localeSearch: "" });
 
-  deliver(page.socket, page.sandbox, page.sandbox.PNDS.events.state, sampleState());
+  deliver(
+    page.socket,
+    page.sandbox,
+    page.sandbox.PNDS.events.state,
+    sampleState(),
+  );
 
-  assert.equal(page.document.getElementById("sub-label").textContent, "监视端 — 全网视图");
-  assert.equal(page.document.getElementById("form-title").textContent, "Hub 连接");
-  assert.equal(page.document.getElementById("b-connect").textContent, "重新连接");
-  assert.equal(page.document.getElementById("banner-copy").textContent, "不适宜演出");
+  assert.equal(
+    page.document.getElementById("sub-label").textContent,
+    "监视端 — 全网视图",
+  );
+  assert.equal(
+    page.document.getElementById("form-title").textContent,
+    "Hub 连接",
+  );
+  assert.equal(
+    page.document.getElementById("b-connect").textContent,
+    "重新连接",
+  );
+  assert.equal(
+    page.document.getElementById("banner-copy").textContent,
+    "不适宜演出",
+  );
   assert.equal(
     page.document.getElementById("banner-attribution").textContent,
     "问题在 site-b 本地腿",
@@ -750,7 +883,9 @@ test("monitor page: renders Chinese by default, before any bridge traffic", () =
   // The performer card's reason line maps the wire key through the
   // Chinese table.
   const card = page.document.getElementById("local-cards").children[0];
-  const reason = card.children.find((node) => node.classList.contains("reason"));
+  const reason = card.children.find((node) =>
+    node.classList.contains("reason"),
+  );
 
   assert.equal(reason.textContent, "本地网络良好");
 });
@@ -758,16 +893,30 @@ test("monitor page: renders Chinese by default, before any bridge traffic", () =
 test("monitor page: a locale message re-renders the whole console live", () => {
   const page = loadPage("monitor.js", { localeSearch: "" });
 
-  deliver(page.socket, page.sandbox, page.sandbox.PNDS.events.state, sampleState());
+  deliver(
+    page.socket,
+    page.sandbox,
+    page.sandbox.PNDS.events.state,
+    sampleState(),
+  );
 
   // The App switches its language to English.
   for (const handler of page.messageListeners) {
     handler(LOCALE_MESSAGE("en"));
   }
 
-  assert.equal(page.document.getElementById("sub-label").textContent, "Monitor — flower view");
-  assert.equal(page.document.getElementById("form-title").textContent, "Hub connection");
-  assert.equal(page.document.getElementById("b-connect").textContent, "Reconnect");
+  assert.equal(
+    page.document.getElementById("sub-label").textContent,
+    "Monitor — flower view",
+  );
+  assert.equal(
+    page.document.getElementById("form-title").textContent,
+    "Hub connection",
+  );
+  assert.equal(
+    page.document.getElementById("b-connect").textContent,
+    "Reconnect",
+  );
   assert.equal(
     page.document.getElementById("banner-copy").textContent,
     "Not suitable for performance",
@@ -790,7 +939,10 @@ test("monitor page: a locale message re-renders the whole console live", () => {
     handler({ data: null });
   }
 
-  assert.equal(page.document.getElementById("b-connect").textContent, "Reconnect");
+  assert.equal(
+    page.document.getElementById("b-connect").textContent,
+    "Reconnect",
+  );
   assert.equal(page.sandbox.PNDS_LOCALE.current(), "en");
 
   // Back to Chinese (a language switch in the other direction).
@@ -798,15 +950,26 @@ test("monitor page: a locale message re-renders the whole console live", () => {
     handler(LOCALE_MESSAGE("zh-CN"));
   }
 
-  assert.equal(page.document.getElementById("b-connect").textContent, "重新连接");
+  assert.equal(
+    page.document.getElementById("b-connect").textContent,
+    "重新连接",
+  );
 });
 
 test("monitor page: ?lang= seeds the first frame before any message", () => {
   const page = loadPage("monitor.js", { localeSearch: "?lang=en&theme=stage" });
 
-  deliver(page.socket, page.sandbox, page.sandbox.PNDS.events.state, sampleState());
+  deliver(
+    page.socket,
+    page.sandbox,
+    page.sandbox.PNDS.events.state,
+    sampleState(),
+  );
 
-  assert.equal(page.document.getElementById("b-connect").textContent, "Reconnect");
+  assert.equal(
+    page.document.getElementById("b-connect").textContent,
+    "Reconnect",
+  );
   assert.equal(page.document.documentElement.lang, "en");
 });
 
@@ -862,7 +1025,11 @@ test("performer page: joins with the persisted token, answers probes, paints the
   );
 
   // The server hands back an id + token; the page persists it.
-  deliver(page.socket, page.sandbox, events.joined, { id: 3, token: "t".repeat(48), recovered: false });
+  deliver(page.socket, page.sandbox, events.joined, {
+    id: 3,
+    token: "t".repeat(48),
+    recovered: false,
+  });
 
   assert.equal(
     page.sandbox.localStorage.getItem("tnd-performer-token"),
@@ -881,9 +1048,15 @@ test("performer page: joins with the persisted token, answers probes, paints the
   // own dot stays gray — client 3 has no card in the sample state.
   deliver(page.socket, page.sandbox, events.state, sampleState());
 
-  assert.ok(page.document.getElementById("row-local").classList.contains("st-green"));
-  assert.ok(page.document.getElementById("row-hub").classList.contains("st-green"));
-  assert.ok(page.document.getElementById("row-self").classList.contains("st-gray"));
+  assert.ok(
+    page.document.getElementById("row-local").classList.contains("st-green"),
+  );
+  assert.ok(
+    page.document.getElementById("row-hub").classList.contains("st-green"),
+  );
+  assert.ok(
+    page.document.getElementById("row-self").classList.contains("st-gray"),
+  );
   assert.equal(page.document.getElementById("w-self").textContent, "GRAY");
 
   assert.equal(page.document.getElementById("w-local").textContent, "GREEN");
@@ -895,8 +1068,12 @@ test("performer page: joins with the persisted token, answers probes, paints the
   noHub.leg = null;
   deliver(page.socket, page.sandbox, events.state, noHub);
 
-  assert.ok(page.document.getElementById("row-hub").classList.contains("st-idle"));
-  assert.ok(page.document.getElementById("row-local").classList.contains("st-green"));
+  assert.ok(
+    page.document.getElementById("row-hub").classList.contains("st-idle"),
+  );
+  assert.ok(
+    page.document.getElementById("row-local").classList.contains("st-green"),
+  );
 
   // A reconnect re-joins with the persisted token.
   deliver(page.socket, page.sandbox, "connect");
@@ -913,7 +1090,11 @@ test("performer page: the own dot mirrors THIS device's local-leg card, live", (
   const page = loadPage("performer.js");
   const events = page.sandbox.PNDS.events;
 
-  deliver(page.socket, page.sandbox, events.joined, { id: 3, token: "t".repeat(48), recovered: false });
+  deliver(page.socket, page.sandbox, events.joined, {
+    id: 3,
+    token: "t".repeat(48),
+    recovered: false,
+  });
 
   const withSelf = (status) => {
     const state = sampleState();
@@ -930,10 +1111,15 @@ test("performer page: the own dot mirrors THIS device's local-leg card, live", (
     withSelf(status);
 
     assert.ok(
-      page.document.getElementById("row-self").classList.contains("st-" + status),
+      page.document
+        .getElementById("row-self")
+        .classList.contains("st-" + status),
       status + " paints the own dot",
     );
-    assert.equal(page.document.getElementById("w-self").textContent, status.toUpperCase());
+    assert.equal(
+      page.document.getElementById("w-self").textContent,
+      status.toUpperCase(),
+    );
   }
 
   // Another performer's verdict is not ours: client 1 red (the site
@@ -942,18 +1128,28 @@ test("performer page: the own dot mirrors THIS device's local-leg card, live", (
 
   foreign.local.clients["1"].status = "red";
   foreign.local.status = "red";
-  foreign.local.clients["3"] = { ...foreign.local.clients["1"], status: "green" };
+  foreign.local.clients["3"] = {
+    ...foreign.local.clients["1"],
+    status: "green",
+  };
   deliver(page.socket, page.sandbox, events.state, foreign);
 
-  assert.ok(page.document.getElementById("row-self").classList.contains("st-green"));
-  assert.ok(page.document.getElementById("row-local").classList.contains("st-red"), "the site row still reads the site worst");
+  assert.ok(
+    page.document.getElementById("row-self").classList.contains("st-green"),
+  );
+  assert.ok(
+    page.document.getElementById("row-local").classList.contains("st-red"),
+    "the site row still reads the site worst",
+  );
 
   // A disconnect clears the identity: the own dot goes gray and a late
   // state broadcast must not repaint it.
   deliver(page.socket, page.sandbox, "disconnect");
 
   withSelf("red");
-  assert.ok(page.document.getElementById("row-self").classList.contains("st-gray"));
+  assert.ok(
+    page.document.getElementById("row-self").classList.contains("st-gray"),
+  );
   assert.equal(page.document.getElementById("w-self").textContent, "GRAY");
 });
 
@@ -974,7 +1170,9 @@ test("performer page: leave button exits — leave emitted, socket closed, cover
 
   // Paint the dots once (client 1 is green in the sample state).
   deliver(page.socket, page.sandbox, events.state, sampleState());
-  assert.ok(page.document.getElementById("row-self").classList.contains("st-green"));
+  assert.ok(
+    page.document.getElementById("row-self").classList.contains("st-green"),
+  );
 
   const cover = page.document.getElementById("left-cover");
   const perf = page.document.getElementById("perf");
@@ -988,7 +1186,11 @@ test("performer page: leave button exits — leave emitted, socket closed, cover
     page.socket.emitted.some(([event]) => event === events.leave),
     "the leave packet is emitted",
   );
-  assert.equal(page.socket.closes, 0, "the page does not close in the same tick (flush race)");
+  assert.equal(
+    page.socket.closes,
+    0,
+    "the page does not close in the same tick (flush race)",
+  );
   assert.ok(!cover.classList.contains("hidden"), "the left cover shows");
   assert.equal(
     page.document.getElementById("left-title").textContent,
@@ -996,7 +1198,10 @@ test("performer page: leave button exits — leave emitted, socket closed, cover
     "the VOLUNTARY exit wording (the monitor-removed variant differs)",
   );
   assert.ok(perf.classList.contains("hidden"), "the dots are gone");
-  assert.ok(leaveButton.classList.contains("hidden"), "the leave button is gone too");
+  assert.ok(
+    leaveButton.classList.contains("hidden"),
+    "the leave button is gone too",
+  );
 
   // The server processed the leave and kicked the socket — the page
   // closes for good (no auto-reconnect).
@@ -1052,7 +1257,9 @@ test("performer page: exited state does not auto-rejoin; the cover tap rejoins w
   click(page.document.getElementById("left-cover"));
 
   assert.equal(page.socket.opens, 1, "the socket is reopened");
-  assert.ok(page.document.getElementById("left-cover").classList.contains("hidden"));
+  assert.ok(
+    page.document.getElementById("left-cover").classList.contains("hidden"),
+  );
   assert.ok(!page.document.getElementById("perf").classList.contains("hidden"));
 
   deliver(page.socket, page.sandbox, "connect");
@@ -1092,7 +1299,11 @@ test("performer page: the leave button ignores a second tap once exited", () => 
     page.socket.emitted.filter(([event]) => event === events.leave).length,
     1,
   );
-  assert.equal(page.socket.closes, 0, "nothing closed — no disconnect has arrived");
+  assert.equal(
+    page.socket.closes,
+    0,
+    "nothing closed — no disconnect has arrived",
+  );
 });
 
 // ------------------------------------------------------------
@@ -1161,7 +1372,11 @@ test("monitor page: every performer card carries an「x」— click emits remove
     const x = head.children[head.children.length - 1];
 
     assert.equal(x.tagName, "button", "the corner control is a button");
-    assert.equal(x.textContent, "✕", "icon-only — the word lives in the aria-label");
+    assert.equal(
+      x.textContent,
+      "×",
+      "icon-only — the word lives in the aria-label",
+    );
     assert.equal(x.attributes["aria-label"], "移除");
   }
 
@@ -1189,7 +1404,10 @@ test("monitor page: every performer card carries an「x」— click emits remove
 
   const fresh = page.document.getElementById("local-cards").children[0];
 
-  assert.equal(fresh.children[0].children[3].attributes["aria-label"], "Remove");
+  assert.equal(
+    fresh.children[0].children[3].attributes["aria-label"],
+    "Remove",
+  );
 });
 
 // ------------------------------------------------------------
@@ -1219,7 +1437,10 @@ test("performer page: removed by the monitor — removed cover, no auto-rejoin, 
     "已被移出检测 · Removed from testing",
     "worded as a removal, not a voluntary exit",
   );
-  assert.ok(page.document.getElementById("perf").classList.contains("hidden"), "the dots are gone");
+  assert.ok(
+    page.document.getElementById("perf").classList.contains("hidden"),
+    "the dots are gone",
+  );
 
   // The kick (the server disconnects right after the notice): any
   // disconnect while exited closes for good — no auto-reconnect.
@@ -1247,4 +1468,116 @@ test("performer page: removed by the monitor — removed cover, no auto-rejoin, 
 
   assert.equal(joins.length, 2);
   assert.equal(joins[1][1].token, "t".repeat(48));
+});
+
+test("instrument monitor: live snapshots and locale changes keep the focused remove button", () => {
+  const page = loadPage("monitor.js");
+  const events = page.sandbox.PNDS.events;
+  const state = sampleState();
+  deliver(page.socket, page.sandbox, events.state, state);
+  const cards = page.document.getElementById("local-cards");
+  const card = cards.children[0];
+  const remove = card.children[0].children[3];
+  remove.focus();
+  state.local.clients["1"].status = "red";
+  state.local.clients["1"].connected = false;
+  deliver(page.socket, page.sandbox, events.state, state);
+  assert.equal(cards.children[0], card);
+  assert.equal(card.children[0].children[3], remove);
+  assert.equal(page.document.activeElement, remove);
+  assert.equal(card.children[0].children[2].textContent, "离线");
+  for (const fn of page.messageListeners)
+    fn({ data: { type: "pnds:locale", version: 1, locale: "en" } });
+  assert.equal(remove.attributes["aria-label"], "Remove");
+  assert.equal(page.document.activeElement, remove);
+  click(remove);
+  assert.deepEqual(
+    JSON.parse(
+      JSON.stringify(
+        page.socket.emitted.filter(([event]) => event === events.remove),
+      ),
+    ),
+    [[events.remove, { id: 1 }]],
+  );
+  delete state.local.clients["1"];
+  state.local.performers = 0;
+  deliver(page.socket, page.sandbox, events.state, state);
+  assert.equal(card.parentNode, null);
+  assert.equal(
+    page.document.activeElement,
+    page.document.getElementById("local-title"),
+  );
+});
+
+test("instrument monitor: online site count excludes stale offline peers without dropping their records", () => {
+  const page = loadPage("monitor.js");
+  const state = sampleState();
+  const events = page.sandbox.PNDS.events;
+  deliver(page.socket, page.sandbox, events.state, state);
+  assert.equal(page.document.getElementById("site-count").textContent, "02");
+  state.leg.peers["site-b"].connected = false;
+  state.leg.peers["site-b"].status = "red";
+  deliver(page.socket, page.sandbox, events.state, state);
+  assert.equal(page.document.getElementById("site-count").textContent, "01");
+  assert.equal(page.document.getElementById("cards").children.length, 2);
+  assert.equal(
+    page.document.getElementById("f-token").value,
+    "",
+    "state must not fill tokens from public activeConfig",
+  );
+});
+
+test("instrument page: Brutal geometry follows the existing per-page theme hook", () => {
+  const html = fs.readFileSync(path.join(PUBLIC_DIR, "index.html"), "utf8");
+  const options = html.match(
+    /window\.PNDS_THEME_OPTIONS = \{[\s\S]*?\n        \};/,
+  )[0];
+  const attributes = {};
+  const listeners = [];
+  const sandbox = {
+    document: {
+      documentElement: {
+        style: { setProperty() {} },
+        setAttribute: (key, value) => {
+          attributes[key] = value;
+        },
+      },
+    },
+    location: { search: "?theme=brutal" },
+    addEventListener: (event, fn) => listeners.push(fn),
+  };
+  sandbox.self = sandbox;
+  sandbox.window = sandbox;
+  const context = vm.createContext(sandbox);
+  vm.runInContext(options, context);
+  vm.runInContext(
+    fs.readFileSync(path.join(ROOT_DIR, "lib/theme-follow.js"), "utf8"),
+    context,
+  );
+  assert.equal(attributes["data-utility-theme"], "brutal");
+  listeners[0]({
+    data: {
+      type: "pnds:theme",
+      version: 1,
+      theme: "stage",
+      palette: { card: "#16181f" },
+    },
+  });
+  assert.equal(attributes["data-utility-theme"], "stage");
+  listeners[0]({ data: { type: "other", theme: "brutal" } });
+  assert.equal(attributes["data-utility-theme"], "stage");
+});
+
+test("instrument phone: device number follows identity and Rejoin uses a native button", () => {
+  const page = loadPage("performer.js");
+  const P = page.sandbox.PNDS;
+  assert.equal(page.document.getElementById("p-id").textContent, "—");
+  deliver(page.socket, page.sandbox, P.events.joined, { id: 7, token: "t7" });
+  assert.equal(page.document.getElementById("p-id").textContent, "07");
+  deliver(page.socket, page.sandbox, "disconnect");
+  assert.equal(page.document.getElementById("p-id").textContent, "—");
+  assert.match(
+    page.document.getElementById("app").innerHTML,
+    /<button type="button" class="left-cover hidden" id="left-cover">/,
+  );
 });

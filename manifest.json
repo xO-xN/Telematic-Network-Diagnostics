@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "telematic-network-diagnostics",
   "name": "Telematic Network Diagnostics",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "PNDS score project for cross-internet network diagnostics: measures the hub leg (score server to public hub) and the local leg (performer to score server) of a hub/star telematic setup.",
   "telematic": true,
   "scoreServer": {
@@ -13,8 +13,6 @@
   },
   "audio": {
     "defaultMode": "none",
-    "supportedModes": [
-      "none"
-    ]
+    "supportedModes": ["none"]
   }
 }

@@ -15,7 +15,10 @@
     root.PNDS = factory({
       readPorts: function () {
         var cfg = root.__PNDS_PORTS__;
-        if (!cfg) throw new Error("__PNDS_PORTS__ not set — ensure __config.js loads before shared.js");
+        if (!cfg)
+          throw new Error(
+            "__PNDS_PORTS__ not set — ensure __config.js loads before shared.js",
+          );
         return cfg;
       },
     });
@@ -117,6 +120,21 @@
           noHubConfigured: "未配置 hub",
         },
         monitor: {
+          sites: "在线站点",
+          networkTitle: "网络拓扑",
+          readingsTitle: "站点读数",
+          readingsNote: "公网延迟与链路质量分别判断",
+          localNote: "本地 Wi-Fi 测量",
+          join: "设备加入",
+          footerHint: "手机保持页面打开，测量会自动进行。",
+          offline: "离线",
+          statusWord: {
+            idle: "未连接",
+            gray: "预热",
+            green: "就绪",
+            yellow: "注意",
+            red: "风险",
+          },
           sub: "监视端 — 全网视图",
           overallLabel: "总体",
           formTitle: "Hub 连接",
@@ -133,14 +151,15 @@
           connected: "已连接",
           reconnect: "重新连接",
           formHint:
-            "App 注入的 env（PNDS_HUB_URL 等）逐字段优先于浏览器记忆预填；无 App 时表单存 localStorage，重开无需重填。",
+            "检查 Hub、Token 和站点名，再连接。App 内的修改用于当前会话。",
           starHint:
             "辐条 = hub 腿（标注 RTT p50，颜色 = 质量）；外环 = 本地腿（灰 = 无数据）",
           starNotConnected: "未连接 hub — 连接后显示全网星型图",
           selfBadge: "本站",
           localTitle: "本地腿 — 本站演奏者",
           countOnline: "· {0} 在线",
-          emptyLocal: "暂无演奏者 — 扫下方二维码，手机连上即自动开始测量",
+          emptyLocal:
+            "暂无演奏者 — 展开下方「设备加入」并扫码，手机连上即自动测量",
           logTitle: "公网腿事件",
           noEvents: "暂无事件",
           scan: "扫码打开演奏者页面",
@@ -203,7 +222,8 @@
         hubReasons: {
           unreachable: "Hub unreachable",
           warmup: "Warming up",
-          invalidToken: "Invalid hub token — fix the token in the App's node settings",
+          invalidToken:
+            "Invalid hub token — fix the token in the App's node settings",
           nodeNameTaken: "Node name taken — change the node name in the App",
           transport: "Transport failure — hub down or network unreachable",
           reconnectsRed: "{0} reconnects in the last {1}s",
@@ -238,6 +258,21 @@
           noHubConfigured: "no hub configured",
         },
         monitor: {
+          sites: "Sites online",
+          networkTitle: "Network topology",
+          readingsTitle: "Site readings",
+          readingsNote: "Hub latency and link quality are assessed separately",
+          localNote: "Local Wi-Fi measurement",
+          join: "Join devices",
+          footerHint: "Keep device pages open. Measurement runs automatically.",
+          offline: "Offline",
+          statusWord: {
+            idle: "Idle",
+            gray: "Warming up",
+            green: "Ready",
+            yellow: "Caution",
+            red: "Risk",
+          },
           sub: "Monitor — flower view",
           overallLabel: "Overall",
           formTitle: "Hub connection",
@@ -251,7 +286,7 @@
           connected: "Connected",
           reconnect: "Reconnect",
           formHint:
-            "The App's env (PNDS_HUB_URL, …) prefills field by field over the browser's memory; without the App the form persists in localStorage — no re-typing on reopen.",
+            "Review your hub settings, then connect. In the App, changes apply to this session.",
           starHint:
             "Spokes = hub legs (RTT p50 labeled, color = quality); outer rings = local legs (gray = no data)",
           starNotConnected:
@@ -260,7 +295,7 @@
           localTitle: "Local leg — this site's performers",
           countOnline: "· {0} online",
           emptyLocal:
-            "No performers yet — scan the QR below; phones start measuring automatically",
+            "No performers yet — expand Join devices below and scan; measurement starts automatically",
           logTitle: "Hub-leg events",
           noEvents: "No events yet",
           scan: "Scan to open the performer page",
@@ -326,7 +361,12 @@
 
     // Performer pair = local + hub + hub + local (four segments, #5
     // reports the local ones).
-    derivedPerformerPair: function (ownLocalP50, ownHubP50, peerHubP50, peerLocalP50) {
+    derivedPerformerPair: function (
+      ownLocalP50,
+      ownHubP50,
+      peerHubP50,
+      peerLocalP50,
+    ) {
       var segments = [ownLocalP50, ownHubP50, peerHubP50, peerLocalP50];
       for (var i = 0; i < segments.length; i++) {
         if (typeof segments[i] !== "number") {

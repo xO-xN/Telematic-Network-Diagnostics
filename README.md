@@ -46,7 +46,7 @@ audio mode `none` only.
   performer is Red at once and the site's worst local status flows to
   every monitor.
 - **Voluntary exit** — a small 退出检测 / Leave testing button in the
-  performer page's bottom corner (single tap, no confirmation) deletes
+  area below the performer panel (single tap, no confirmation) deletes
   the client outright: the card disappears, the site verdict — and
   every remote monitor's, via the hub — stops counting that leg, the
   exit is logged ("client N 退出（performer）"), and the slot and
@@ -82,9 +82,19 @@ audio mode `none` only.
   (all four themes) via the `pnds:theme` bridge and the App's language
   (English / 简体中文) via the `pnds:locale` bridge and the `?lang=`
   first-frame parameter — every label, status line, reason and event
-  renders live in the App's language; the performer page stays as-is.
+  renders live in the App's language; the performer page keeps its bilingual copy and its own palette.
 
 ### Status
+
+v0.6.1: utility instrument panels — the network verdict and fault attribution
+lead into a hub/star diagram beside persistent connection settings. Site readings
+sit below, with local performer cards in their own panel. Live refreshes keep
+performer cards and removal buttons stable; hub event history and the join QR
+use native disclosures. The phone view shows its device number and three verdicts,
+with a native full-page Rejoin button. Measurement rules and connection protocols
+are unchanged. The monitor follows App colors and language; Brutal uses square
+corners and hard shadows, and reduced motion disables transitions.
+
 
 v0.2.0 (issue #7): locale following — the monitor page follows the
 App's language (`pnds:locale` bridge + `?lang=` first frame) and
@@ -327,6 +337,14 @@ SuperCollider：工程仅以 audio mode `none` 运行。
   即时切换；performer 页保持原样。
 
 ### 状态
+
+v0.6.1：与 Multichannel Gen、Local Diagnostics 共用仪器面板语言。顶部突出全网
+结论和故障归因，星形拓扑图与连接设置并排，下方为各站点读数及独立的本站设备
+面板。实时刷新保留设备卡片和移除按钮的 DOM 身份；公网事件日志和加入二维码
+使用原生折叠。手机页增加设备编号，保留三段诊断，重新加入使用原生整页按钮。
+测量规则、连接协议及退出 / 移除语义保持原样。Monitor 跟随 App 主题与语言，
+Brutal 使用方角硬阴影，减少动态效果设置关闭过渡。
+
 
 v0.2.0（issue #7）：语言跟随——monitor 页跟随 App 语言（`pnds:locale`
 消息 + `?lang=` 首帧参数），全部界面经双语文案表渲染（默认中文，即本

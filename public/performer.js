@@ -5,13 +5,13 @@
 // claim token) and answers every local-leg probe immediately so the
 // server can measure the real round trip. Zero controls.
 //
-// The page shows three dots and nothing else (issue #5: no cross-site
+// The page shows its device number and three verdicts (no cross-site
 // details ever render here): THIS device's own local-leg verdict, this
 // site's local-leg worst, and this site's hub leg. All three read the
 // same state broadcast the monitor renders.
 //
 // One escape hatch (issue #10): the 退出检测 button — small, low
-// contrast, tucked into the bottom corner, single tap, no confirmation.
+// emphasis, below the panel, single tap, no confirmation.
 // Tapping it deletes the client on the server (a voluntary exit is not
 // a network fault — the site verdict must stop counting this leg) and
 // flips the page to its "left" cover: the socket is closed (no auto
@@ -29,36 +29,39 @@
 const P = window.PNDS;
 
 const app = document.getElementById("app");
+app.className = "performer-instrument";
 
 app.innerHTML =
+  '<div class="brand"><span>PNDS UTILITY</span></div>' +
   "<header>" +
-  "<h1>Telematic Network Diagnostics</h1>" +
+  "<h1>Telematic Diagnostics</h1>" +
   '<span class="sub">Performer</span>' +
   "</header>" +
   '<div class="perf" id="perf">' +
+  '<span class="perf-id" id="p-id">—</span>' +
   '<div class="dot-row st-gray" id="row-self">' +
-  '<span class="dot"></span>' +
+  '<span class="dot" aria-hidden="true"></span>' +
   '<span class="dot-k">本机 This device</span>' +
   '<span class="dot-word" id="w-self">…</span>' +
   "</div>" +
   '<div class="dot-row st-gray" id="row-local">' +
-  '<span class="dot"></span>' +
+  '<span class="dot" aria-hidden="true"></span>' +
   '<span class="dot-k">本地腿 Local leg</span>' +
   '<span class="dot-word" id="w-local">…</span>' +
   "</div>" +
   '<div class="dot-row st-gray" id="row-hub">' +
-  '<span class="dot"></span>' +
+  '<span class="dot" aria-hidden="true"></span>' +
   '<span class="dot-k">Hub 腿 Hub link</span>' +
   '<span class="dot-word" id="w-hub">…</span>' +
   "</div>" +
-  '<p class="status" id="p-status">Connecting…</p>' +
+  '<p class="status" id="p-status" role="status">Connecting…</p>' +
   '<p class="meta" id="p-meta"></p>' +
   "</div>" +
   '<button class="leave-btn" id="b-leave">退出检测 Leave testing</button>' +
-  '<div class="left-cover hidden" id="left-cover">' +
-  '<p class="left-title" id="left-title">已退出检测 · Left testing</p>' +
-  '<p class="left-hint">重新加入 · Rejoin</p>' +
-  "</div>";
+  '<button type="button" class="left-cover hidden" id="left-cover">' +
+  '<span class="left-title" id="left-title">已退出检测 · Left testing</span>' +
+  '<span class="left-hint">重新加入 · Rejoin</span>' +
+  "</button>";
 
 const selfRow = document.getElementById("row-self");
 const selfWord = document.getElementById("w-self");
@@ -67,6 +70,7 @@ const localWord = document.getElementById("w-local");
 const hubRow = document.getElementById("row-hub");
 const hubWord = document.getElementById("w-hub");
 const statusEl = document.getElementById("p-status");
+const idEl = document.getElementById("p-id");
 const metaEl = document.getElementById("p-meta");
 const perfEl = document.getElementById("perf");
 const leaveButton = document.getElementById("b-leave");
@@ -85,9 +89,11 @@ function setStatus(row, word, status) {
 
 function setJoined(joined, id) {
   if (joined) {
+    idEl.textContent = String(id).padStart(2, "0");
     statusEl.textContent = "已连接，测试中… · Connected, testing…";
     metaEl.textContent = "Client " + id + " · 零操作，无需设置";
   } else {
+    idEl.textContent = "—";
     clientId = null;
     statusEl.textContent = "Connecting…";
     metaEl.textContent = "";
@@ -115,16 +121,17 @@ function setLeft(exited, removed = false) {
     coverTitleEl.textContent = removed
       ? "已被移出检测 · Removed from testing"
       : "已退出检测 · Left testing";
+    idEl.textContent = "—";
     clientId = null;
     statusEl.textContent = "Connecting…";
     metaEl.textContent = "";
   }
 }
 
-const socket = io(
-  "http://" + location.hostname + ":" + P.performerPort,
-  { reconnection: true, reconnectionDelay: 1000 },
-);
+const socket = io("http://" + location.hostname + ":" + P.performerPort, {
+  reconnection: true,
+  reconnectionDelay: 1000,
+});
 
 socket.on(P.events.joined, (data) => {
   localStorage.setItem(P.storageKeys.performerToken, data.token);
@@ -134,7 +141,8 @@ socket.on(P.events.joined, (data) => {
 
 socket.on(P.events.rejected, (data) => {
   setJoined(false);
-  statusEl.textContent = "Rejected: " + (data && data.reason ? data.reason : "");
+  statusEl.textContent =
+    "Rejected: " + (data && data.reason ? data.reason : "");
 });
 
 socket.on("connect", () => {

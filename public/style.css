@@ -1,714 +1,797 @@
-/* Telematic Network Diagnostics — both pages.
- *
- * Visual language follows Local Network Diagnostics (itself the
- * "Multichannel Signal Generator" language): light theme, centered
- * flex column, white rounded cards with subtle shadows, indigo accent.
- * Plain DOM, no canvas.
- */
-
-/* The project's own colors — the standalone look, shared by both pages.
- * Inside the App, the theme bridge (lib/theme-follow.js, monitor page
- * only) rewrites the consumed variables from the App's pnds:theme
- * pushes (spec §5.3 "Theme Following"); absent a theme, these values
- * render unchanged. */
+/* PNDS utility instruments. Colors and geometry follow the App on monitors. */
 :root {
-  --bg: #f4f5fa;
-  --card: #ffffff;
-  --text: #1c1e2b;
-  --muted: #8a8fa3;
-  --accent: #5a4ff3;
-  --accent-soft: #e8eafd;
-  --danger: #e11d48;
-  --track: #e8ebf7;
-  --green: #16a34a;
-  --yellow: #d97706;
-  --red: #e11d48;
-  --gray: #8a8fa3;
+  --bg: #edf0ef;
+  --card: #f9fbfa;
+  --text: #20332f;
+  --muted: #62716c;
+  --accent: #256c5b;
+  --accent-soft: #dfede7;
+  --danger: #bc354a;
+  --track: #d6dfdb;
+  --green: #15803d;
+  --yellow: #b45309;
+  --red: #bc354a;
+  --gray: #62716c;
+  --line: color-mix(in srgb, var(--text) 18%, var(--card));
+  --surface: color-mix(in srgb, var(--card) 70%, var(--bg));
+  --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  --radius: 18px;
+  --duration: 140ms;
 }
-
 * {
   box-sizing: border-box;
 }
-
 html,
 body {
   margin: 0;
   min-height: 100%;
 }
-
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-    "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
   background: var(--bg);
   color: var(--text);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  min-height: 100vh;
-  padding: 10px 14px;
+  min-block-size: 100vh;
+  display: grid;
+  place-items: center;
+  padding: clamp(20px, 4vw, 48px);
 }
-
 #app {
+  inline-size: min(1100px, 100%);
+}
+button,
+input {
+  font: inherit;
+  color: inherit;
+}
+button,
+summary {
+  -webkit-tap-highlight-color: transparent;
+  cursor: default;
+}
+button:focus-visible,
+summary:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 4px;
+}
+button:disabled {
+  cursor: default;
+}
+.brand {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 8px;
-  width: 100%;
-}
-
-header {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 8px;
-  text-align: center;
-}
-
-header h1 {
-  font-size: 14px;
-  font-weight: 600;
-  margin: 0;
-}
-
-header .sub {
-  font-size: 11px;
+  gap: 10px;
+  margin-block-end: 28px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
   color: var(--muted);
 }
-
-/* ------------------------------------------------------------
- * Status palette (applied via .st-* on banner / cards)
- * ------------------------------------------------------------ */
-
+.brand svg {
+  inline-size: 28px;
+  block-size: 20px;
+  color: var(--accent);
+}
+header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+}
+h1 {
+  font-size: clamp(27px, 3.8vw, 42px);
+  font-weight: 650;
+  letter-spacing: -0.055em;
+  margin: 0;
+  line-height: 1.1;
+}
+header .sub {
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+.activity {
+  text-align: end;
+  flex-shrink: 0;
+}
+.activity-value {
+  display: block;
+  font-family: var(--mono);
+  font-size: 28px;
+  letter-spacing: -0.06em;
+  line-height: 1.2;
+}
+.activity-label {
+  display: block;
+  font-size: 10px;
+  color: var(--muted);
+  margin-block-start: 5px;
+}
 .st-green {
   --st: var(--green);
 }
-
 .st-yellow {
   --st: var(--yellow);
 }
-
 .st-red {
   --st: var(--red);
 }
-
 .st-gray,
 .st-idle {
   --st: var(--gray);
 }
-
 .dot {
-  width: 10px;
-  height: 10px;
+  display: inline-block;
+  inline-size: 8px;
+  block-size: 8px;
   border-radius: 50%;
   background: var(--track);
-  flex: none;
+  flex-shrink: 0;
 }
-
 .dot.on {
   background: var(--st);
 }
-
-/* ------------------------------------------------------------
- * Status banner (monitor)
- * ------------------------------------------------------------ */
-
+.panel {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--text) 5%, transparent);
+}
+.network-panel {
+  margin-block-start: 28px;
+}
 .overall {
   display: flex;
   align-items: center;
-  gap: 10px;
-  background: var(--card);
-  border: 1px solid var(--track);
-  border-radius: 12px;
-  padding: 7px 14px;
-  box-shadow: 0 1px 3px rgba(23, 26, 43, 0.08);
-  min-width: min(420px, 100%);
-  justify-content: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 24px;
+  border-block-end: 1px solid var(--line);
 }
-
-.overall .dot {
-  width: 12px;
-  height: 12px;
-  background: var(--st);
-}
-
 .overall-label {
-  font-size: 12px;
-  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
   color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
 }
-
 .overall-copy {
-  font-size: 14px;
-  font-weight: 600;
+  margin: 10px 0 0;
+  font-size: clamp(19px, 2.5vw, 26px);
+  font-weight: 550;
+  letter-spacing: -0.04em;
+  line-height: 1.25;
   color: var(--st);
 }
-
+.attribution {
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.6;
+  max-inline-size: 300px;
+  text-align: end;
+  margin: 0;
+}
 .attribution:empty {
   display: none;
 }
-
-.attribution {
-  font-size: 12px;
+h2 {
+  font-size: 11px;
   font-weight: 600;
-  color: var(--text);
-  background: var(--accent-soft);
-  border-radius: 999px;
-  padding: 2px 10px;
+  margin: 0;
 }
-
-/* ------------------------------------------------------------
- * Star diagram (monitor, issue #4) — pure inline SVG, no deps
- * ------------------------------------------------------------ */
-
+.top-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+}
 .star-panel {
+  padding: 24px;
+  min-inline-size: 0;
+}
+#star {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 6px;
+  justify-content: center;
+  min-block-size: 300px;
 }
-
 .star-svg {
-  /* Compact console: the star renders at ~270px, so the in-SVG label
-   * font sizes below are bumped to stay readable at that scale (the
-   * 360-unit viewBox scales everything proportionally). */
-  width: min(250px, 100%);
-  height: auto;
+  inline-size: min(330px, 100%);
+  block-size: auto;
+  overflow: visible;
 }
-
+.star-panel .hint {
+  max-inline-size: 430px;
+  margin-inline: auto;
+  text-align: center;
+}
 .hub-core {
   fill: var(--accent-soft);
   stroke: var(--accent);
-  stroke-width: 2;
+  stroke-width: 1.5;
 }
-
 .hub-label {
   fill: var(--muted);
-  font-size: 14px;
-  font-weight: 700;
+  font-family: var(--mono);
+  font-size: 11px;
   text-anchor: middle;
 }
-
 .spoke {
   stroke: var(--st);
-  stroke-width: 3;
+  stroke-width: 1.5;
   stroke-linecap: round;
 }
-
 .spoke-label {
   fill: var(--text);
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
+  font-family: var(--mono);
+  font-size: 12px;
+  paint-order: stroke;
+  stroke: var(--card);
+  stroke-width: 5px;
+  stroke-linejoin: round;
 }
-
 .node-ring {
   fill: var(--card);
   stroke: var(--st);
-  stroke-width: 4;
+  stroke-width: 2;
 }
-
 .node-core {
-  stroke: none;
   fill: var(--st);
 }
-
 .node-name {
   fill: var(--text);
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 550;
 }
-
 .self-badge {
-  fill: var(--accent);
-  font-size: 13px;
-  font-weight: 700;
-}
-
-/* ------------------------------------------------------------
- * Node cards (monitor)
- * ------------------------------------------------------------ */
-
-/* The top grid's third column: the hub-leg cards with the event log
- * tucked underneath. The column is otherwise shorter than the star, so
- * the log fills existing space instead of adding a row to the page; it
- * grows with peers only when there is real content to show. */
-.cards-col {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-width: 0;
-}
-
-#cards {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-#cards .client-card {
-  width: auto;
-}
-
-.client-card {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  background: var(--card);
-  border: 1px solid var(--track);
-  border-radius: 10px;
-  padding: 8px 12px 10px;
-  width: 250px;
-  box-shadow: 0 1px 3px rgba(23, 26, 43, 0.06);
-  border-left: 3px solid var(--st);
-}
-
-.client-card .head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.client-card .head .dot {
-  background: var(--st);
-}
-
-.client-card .tag {
+  fill: var(--muted);
   font-size: 10px;
-  font-weight: 700;
-  color: var(--accent);
-  background: var(--accent-soft);
-  border-radius: 999px;
-  padding: 1px 7px;
 }
-
-.client-card .status-word {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--st);
-  margin-left: auto;
+#form-panel {
+  padding: 24px;
+  border-inline-start: 1px solid var(--line);
 }
-
-.client-card .copy {
-  font-size: 11px;
-  color: var(--st);
-}
-
-.client-card .reason {
-  font-size: 11px;
-  color: var(--muted);
-  min-height: 14px;
-}
-
-.client-card .derived {
-  border-top: 1px solid var(--track);
-  margin-top: 4px;
-  padding-top: 6px;
-  margin-bottom: 4px;
-}
-
-.client-card .derived-k {
-  font-size: 10px;
-  color: var(--muted);
-}
-
-.client-card .derived .big {
-  font-size: 19px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  color: var(--text);
-}
-
-.client-card .derived .formula {
-  font-size: 11px;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
-
-.client-card .rows {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  column-gap: 12px;
-  row-gap: 4px;
-}
-
-/* Metric tiles: label above value, half a card wide each — a horizontal
- * label/value pair wraps ugly at this width; a stacked tile cannot. */
-.client-card .row {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 0;
-}
-
-.client-card .row .k {
-  color: var(--muted);
-  font-size: 10px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.client-card .row .v {
-  font-variant-numeric: tabular-nums;
-  font-size: 12px;
-  white-space: nowrap;
-}
-
-.client-card .events-line {
-  border-top: 1px solid var(--track);
-  margin-top: 4px;
-  padding-top: 5px;
-  font-size: 11px;
-  color: var(--muted);
-}
-
-/* The performer card's corner「x」(issue #13): icon-only (the word
- * lives in the aria-label, from the copy table), quiet until hovered,
- * present on every card — online or disconnected. Single tap deletes
- * the client on the server; no confirmation. */
-.remove-btn {
-  flex: none;
-  font-size: 12px;
-  font-weight: 400;
-  line-height: 1;
-  font-family: inherit;
-  color: var(--muted);
-  background: none;
-  border: none;
-  border-radius: 4px;
-  padding: 3px 5px;
-  cursor: pointer;
-}
-
-.remove-btn:hover {
-  color: var(--danger);
-}
-
-/* ------------------------------------------------------------
- * Local panel (monitor, issue #5): this site's performers
- * ------------------------------------------------------------ */
-
-.panel.wide {
-  width: min(960px, 100%);
-}
-
-.panel h3 .count {
-  font-weight: 600;
-  color: var(--muted);
-}
-
-.local-cards {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.local-cards .client-card {
-  width: 225px;
-}
-
-/* Site-level local events (voluntary exits — issue #10): a muted
- * full-width line under the performer cards; it is the only trace a
- * deleted card leaves behind. */
-.local-cards .site-events {
-  width: 100%;
-  border-top: 1px solid var(--track);
-  padding-top: 5px;
-  font-size: 11px;
-  color: var(--muted);
-}
-
-/* The local panel's content row: performer cards left, the join QR
- * pinned to the row's end — scanning to join lives where the performer
- * cards are, and the QR's height is absorbed by the cards beside it. */
-.local-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: flex-start;
-}
-
-.qr-inline {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  margin-inline-start: auto;
-}
-
-.qr-inline img {
-  width: 96px;
-  height: 96px;
-  border-radius: 8px;
-  border: 1px solid var(--track);
-  background: #fff;
-}
-
-.qr-inline .sub {
-  font-size: 11px;
-  color: var(--muted);
-  max-width: 110px;
-  text-align: center;
-}
-
-/* ------------------------------------------------------------
- * Panels: form + star + event log (monitor)
- * ------------------------------------------------------------ */
-
-.panel {
-  background: var(--card);
-  border: 1px solid var(--track);
-  border-radius: 10px;
-  padding: 10px 12px 12px;
-  width: min(400px, 100%);
-  box-shadow: 0 1px 3px rgba(23, 26, 43, 0.06);
-}
-
-/* The compact three-column top row: connection form | star | hub-leg
- * cards — everything the operator watches, one screen, no scrolling.
- * Stacks vertically on narrow screens. */
-.top-grid {
-  display: grid;
-  grid-template-columns: minmax(240px, 1fr) auto minmax(260px, 1.15fr);
-  gap: 12px;
-  width: min(960px, 100%);
-  align-items: start;
-}
-
-@media (max-width: 639px) {
-  .top-grid {
-    grid-template-columns: 1fr;
-  }
-}
-
-.panel h3 {
-  font-size: 12px;
-  font-weight: 700;
-  margin: 0 0 6px;
-  color: var(--text);
-}
-
 .form-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px 12px;
+  margin-block-start: 22px;
 }
-
-@media (max-width: 479px) {
-  .form-grid {
-    grid-template-columns: 1fr;
-  }
-}
-
 .form-grid label {
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  font-size: 11px;
+  gap: 8px;
+  font-size: 10px;
   color: var(--muted);
-  min-width: 0;
+  min-inline-size: 0;
 }
-
+.form-grid label:first-child {
+  grid-column: 1 / -1;
+}
 .form-grid input,
 .derived-room {
-  font-size: 13px;
-  font-family: inherit;
-  width: 100%;
-  min-width: 0;
-  padding: 7px 9px;
-  border: 1px solid var(--track);
-  border-radius: 8px;
-  background: var(--bg);
+  inline-size: 100%;
+  min-inline-size: 0;
+  font-size: 12px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--surface);
+  min-block-size: 38px;
 }
-
-.form-grid input {
-  color: var(--text);
+.form-grid label:nth-child(3) {
+  grid-column: 1 / -1;
+  grid-row: 3;
 }
-
-.form-grid input:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent);
+.form-grid label:nth-child(4) {
+  grid-column: 2;
+  grid-row: 2;
 }
-
-/* The App-present room slot (issue #15): the read-only line that
- * replaces the room input when the App injects the derived room full
- * name ({project id}_{group}) — the operator verifies it, never edits
- * it. The input's quiet twin: same shape, muted, ellipsized. */
 .derived-room {
-  color: var(--muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  color: var(--text);
+  overflow-wrap: anywhere;
+  font-family: var(--mono);
+  line-height: 1.5;
 }
-
 .form-actions {
-  display: flex;
-  gap: 8px;
-  margin-top: 8px;
+  margin-block-start: 16px;
 }
-
 .form-actions button {
-  flex: 1;
-  font-size: 13px;
-  font-weight: 600;
-  font-family: inherit;
-  padding: 8px 0;
-  border: none;
-  border-radius: 8px;
-  cursor: pointer;
-  background: var(--accent);
-  color: #ffffff;
+  inline-size: 100%;
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  padding: 10px;
+  font-size: 12px;
+  font-weight: 550;
+  background: var(--accent-soft);
+  transition: background var(--duration);
 }
-
+.form-actions button:hover:enabled {
+  background: var(--surface);
+}
+.form-actions button:active:enabled {
+  box-shadow: inset 0 0 0 1px var(--text);
+}
 .form-actions button:disabled {
-  background: var(--track);
+  border-color: var(--line);
   color: var(--muted);
-  cursor: default;
+  background: var(--surface);
 }
-
 .hint {
   font-size: 11px;
+  line-height: 1.7;
   color: var(--muted);
-  margin-top: 6px;
+  margin: 12px 0 0;
 }
-
-/* ------------------------------------------------------------
- * Event log (monitor)
- * ------------------------------------------------------------ */
-
+.connection-log {
+  margin-block-start: 20px;
+  border-block-start: 1px solid var(--line);
+  padding-block-start: 12px;
+}
+.connection-log summary {
+  font-size: 10px;
+  color: var(--muted);
+  padding-block: 5px;
+}
 .log {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  /* The log is capped, not grown: an unbounded event history must never
-   * push the console past one screen — it scrolls inside its box. */
-  max-height: 64px;
-  overflow-y: auto;
+  margin-block-start: 10px;
+  max-block-size: 160px;
+  overflow: auto;
 }
-
 .log .entry {
-  font-size: 11px;
+  font-size: 10px;
   color: var(--muted);
+  line-height: 1.7;
+  padding-block: 4px;
+  overflow-wrap: anywhere;
 }
-
 .log .entry b {
   color: var(--text);
-  font-weight: 600;
+  font-weight: 550;
 }
-
-/* ------------------------------------------------------------
- * Performer page (issue #5): LND-minimal, three dots — this device's
- * own verdict, this site's local leg, this site's hub leg
- * ------------------------------------------------------------ */
-
-.perf {
+.site-readings {
+  border-block-start: 1px solid var(--line);
+  padding: 20px;
+}
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-block-end: 18px;
+}
+.section-note {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.5;
+  text-align: end;
+}
+#cards,
+.local-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.client-card {
+  display: flex;
+  flex-direction: column;
+  min-inline-size: 0;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: calc(var(--radius) / 3);
+  padding: 18px 16px;
+}
+.client-card .head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 550;
+  margin-block-end: 12px;
+}
+.node-name-label {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+.client-card .head .dot {
+  background: var(--st);
+}
+.client-card .tag {
+  font-size: 9px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.status-word {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--st);
+  margin-inline-start: auto;
+  flex-shrink: 0;
+}
+.client-card .copy {
+  font-size: 12px;
+  font-weight: 550;
+  line-height: 1.5;
+  color: var(--st);
+}
+.client-card .reason {
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.6;
+  min-block-size: 32px;
+  padding-block-start: 4px;
+  overflow-wrap: anywhere;
+}
+.client-card .rows {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px 12px;
+  padding-block-start: 16px;
+  border-block-start: 1px solid var(--line);
+  margin-block-start: 12px;
+}
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-inline-size: 0;
+}
+.row .k {
+  font-size: 9px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+.row .v {
+  font-family: var(--mono);
+  font-size: 16px;
+  letter-spacing: -0.045em;
+  overflow-wrap: anywhere;
+}
+.derived {
+  border-block-start: 1px solid var(--line);
+  margin-block-start: 12px;
+  padding-block-start: 12px;
+}
+.derived-k {
+  font-size: 10px;
+  color: var(--muted);
+}
+.derived .big {
+  font-family: var(--mono);
+  font-size: 28px;
+  letter-spacing: -0.06em;
+  line-height: 1.5;
+}
+.formula {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--muted);
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.local-panel {
+  margin-block-start: 18px;
+  padding: 20px;
+}
+.count {
+  color: var(--muted);
+  font-weight: 400;
+}
+.client-name {
+  min-inline-size: 0;
+}
+.remove-btn {
+  flex-shrink: 0;
+  inline-size: 28px;
+  block-size: 28px;
+  padding: 0;
+  font-size: 18px;
+  font-weight: 400;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+}
+.remove-btn:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+.remove-btn:active {
+  background: var(--card);
+}
+.events-line {
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.7;
+  border-block-start: 1px solid var(--line);
+  padding-block-start: 10px;
+  margin-block-start: 16px;
+}
+.site-events,
+.empty-local {
+  grid-column: 1 / -1;
+}
+.empty-local {
+  margin: 0;
+  min-block-size: 110px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+  padding: 24px;
+  text-align: center;
+}
+footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-block-start: 16px;
+}
+footer .hint {
+  margin: 0;
+}
+.remote {
+  position: relative;
+  flex-shrink: 0;
+}
+.remote summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-block-size: 40px;
+  padding-inline: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  list-style: none;
+  font-size: 11px;
+}
+.remote summary::-webkit-details-marker {
+  display: none;
+}
+.remote summary::after {
+  content: "+";
+  font-family: var(--mono);
+  color: var(--muted);
+}
+.remote[open] summary::after {
+  content: "−";
+}
+.remote summary svg {
+  inline-size: 14px;
+  block-size: 14px;
+}
+.qr-row {
+  position: absolute;
+  inset-block-end: calc(100% + 10px);
+  inset-inline-end: 0;
+  inline-size: 208px;
+  padding: 20px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--text) 12%, transparent);
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 14px;
-  background: var(--card);
-  border: 1px solid var(--track);
-  border-radius: 14px;
-  padding: 36px 48px;
-  box-shadow: 0 1px 3px rgba(23, 26, 43, 0.08);
-  min-width: min(320px, 100%);
+  gap: 12px;
+  z-index: 1;
+}
+.qr-row img {
+  inline-size: 144px;
+  block-size: 144px;
+  border: 6px solid #fff;
+  background: #fff;
+  border-radius: 3px;
+}
+.qr-row span {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
   text-align: center;
 }
-
-.perf h2 {
-  font-size: 16px;
-  margin: 0;
+#app.performer-instrument {
+  inline-size: min(440px, 100%);
 }
-
-.perf .dot-row {
+.performer-instrument header {
+  display: block;
+}
+.performer-instrument h1 {
+  font-size: 32px;
+}
+.perf {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 28px;
+  margin-block-start: 28px;
+}
+.perf-id {
+  display: block;
+  font-family: var(--mono);
+  font-size: 84px;
+  line-height: 1;
+  letter-spacing: -0.075em;
+  margin-block-end: 28px;
+}
+.dot-row {
   display: flex;
   align-items: center;
   gap: 10px;
-  width: 300px;
-  font-size: 13px;
+  padding-block: 14px;
+  border-block-end: 1px solid var(--line);
+  font-size: 12px;
 }
-
-.perf .dot-row .dot {
-  width: 14px;
-  height: 14px;
+.dot-row .dot {
   background: var(--st);
-  flex: none;
 }
-
-.perf .dot-row .dot-k {
+.dot-k {
   color: var(--muted);
 }
-
-.perf .dot-row .dot-word {
-  margin-left: auto;
-  font-size: 12px;
-  font-weight: 700;
+.dot-word {
   color: var(--st);
+  margin-inline-start: auto;
+  font-family: var(--mono);
+  font-size: 10px;
 }
-
 .perf .status {
-  font-size: 18px;
-  font-weight: 600;
-}
-
-.perf .meta {
   font-size: 12px;
-  color: var(--muted);
+  line-height: 1.6;
+  margin: 24px 0 8px;
 }
-
-/* Voluntary exit (issue #10): small, low-contrast, bottom corner —
- * present but never inviting a tap. */
+.perf .meta {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.7;
+  margin: 0;
+}
 .leave-btn {
-  position: fixed;
-  right: 10px;
-  bottom: 8px;
+  display: block;
+  margin-block-start: 16px;
+  margin-inline-start: auto;
+  min-block-size: 44px;
   font-size: 11px;
-  font-family: inherit;
   color: var(--muted);
   background: none;
-  border: none;
-  padding: 10px;
-  cursor: pointer;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding-inline: 12px;
 }
-
-/* The exited state: the whole page becomes the rejoin tap target. */
+.leave-btn:active {
+  background: var(--card);
+}
 .left-cover {
   position: fixed;
   inset: 0;
   z-index: 10;
+  inline-size: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 12px;
   background: var(--bg);
-  cursor: pointer;
   text-align: center;
+  border: none;
   padding: 24px;
 }
-
-.left-cover .left-title {
-  margin: 0;
+.left-title {
   font-size: 18px;
-  font-weight: 600;
-  color: var(--text);
+  font-weight: 550;
 }
-
-.left-cover .left-hint {
-  margin: 0;
+.left-hint {
   font-size: 14px;
-  font-weight: 600;
   color: var(--accent);
 }
-
-/* Deliberately LAST: .hidden must out-rank the display rules above
- * (.perf, .left-cover — same specificity, source order decides). */
-.hidden {
-  display: none;
+[data-utility-theme="brutal"] {
+  --radius: 0px;
+  --duration: 0ms;
+  --line: var(--text);
+}
+[data-utility-theme="brutal"] .panel {
+  box-shadow: 4px 4px 0 var(--text);
+}
+[data-utility-theme="brutal"] input,
+[data-utility-theme="brutal"] button,
+[data-utility-theme="brutal"] .derived-room,
+[data-utility-theme="brutal"] .remote summary,
+[data-utility-theme="brutal"] .qr-row {
+  border-radius: 0;
+}
+@media (max-width: 940px) {
+  #cards,
+  .local-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .top-grid {
+    grid-template-columns: minmax(0, 1fr) 300px;
+  }
+  #form-panel {
+    padding: 20px;
+  }
+}
+@media (max-width: 700px) {
+  .top-grid {
+    grid-template-columns: 1fr;
+  }
+  #form-panel {
+    border-inline-start: none;
+    border-block-start: 1px solid var(--line);
+  }
+  #star {
+    min-block-size: 240px;
+  }
+  .star-svg {
+    inline-size: min(280px, 100%);
+  }
+  .overall {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+  .attribution {
+    text-align: start;
+    max-inline-size: none;
+  }
+}
+@media (max-width: 540px) {
+  body {
+    padding: 24px 16px;
+  }
+  .brand {
+    margin-block-end: 22px;
+  }
+  header {
+    align-items: flex-start;
+    gap: 12px;
+  }
+  h1 {
+    font-size: 29px;
+  }
+  header .sub {
+    font-size: 11px;
+  }
+  .activity-value {
+    font-size: 23px;
+  }
+  .activity-label {
+    font-size: 9px;
+  }
+  #cards,
+  .local-cards {
+    grid-template-columns: 1fr;
+  }
+  .network-panel {
+    margin-block-start: 22px;
+  }
+  .overall,
+  .star-panel {
+    padding: 20px;
+  }
+  .site-readings,
+  .local-panel {
+    padding: 16px;
+  }
+  .section-head {
+    align-items: flex-start;
+  }
+  .section-note {
+    max-inline-size: 150px;
+    font-size: 9px;
+  }
+  footer .hint {
+    max-inline-size: 180px;
+    font-size: 10px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration: 0ms;
+  }
+}
+.hidden,
+[hidden] {
+  display: none !important;
 }
