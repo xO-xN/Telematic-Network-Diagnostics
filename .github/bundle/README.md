@@ -1,30 +1,28 @@
 # Telematic Network Diagnostics
 
-A runnable PNDS score project for cross-internet network diagnostics.
+[中文](README.zh-CN.md) | **English**
 
-This folder is a **PNDS score project**, packaged and ready to run
-offline. No audio, no SuperCollider — it runs in audio mode `none`.
+A PNDS utility for diagnosing cross-internet (telematic) setups: every site runs this project and phones join locally, and each site's monitor shows the same star view — an overall verdict with fault attribution, hub legs as spokes, local legs as outer rings — plus per-node cards with derived end-to-end numbers. Network-only: no audio, no SuperCollider; the project always runs with audio disabled (`none` mode).
 
-## How to diagnose a telematic setup
+## How to use
 
-1. Install PNDS App (macOS, Apple Silicon):
-   https://github.com/xO-xN/PNDS-App/releases/latest
-2. In PNDS App, press **⌘O** and select this folder. The project starts
-   with audio disabled; the score server listens on ports 6868
-   (performer) and 6869 (monitor).
-3. The relay hub is **not** part of this bundle — it deploys from
-   source onto a public VPS (see `docs/hub-deployment.md` in the
+1. In the PNDS App, press **⌘O** (Open) and select this `.pnds` bundle or its
+   unzipped folder, then **Load** it — audio stays disabled; the score server
+   listens on ports 6868 (performer) and 6869 (monitor). Don't have the App
+   yet? Download it from https://github.com/xO-xN/PNDS-App/releases/latest
+   (macOS) — no Node.js installation is required, the App bundles it.
+2. The relay hub is **not** part of this bundle — it deploys from source onto
+   a public VPS (see `docs/hub-deployment.md` in the
    [repository](https://github.com/xO-xN/Telematic-Network-Diagnostics)).
    Point the score server at it through the monitor's connection form
-   (URL / token / room / node name) or the `PNDS_HUB_*` environment
-   variables the App injects.
-4. Performers open `http://<Host-LAN-IP>:6868/` on their phones (scan
-   the QR on the monitor page `http://<Host-LAN-IP>:6869/`). They are
-   measured automatically — zero controls.
-5. Every site's monitor shows the same flower view: an overall
-   "suitable for performance" banner with fault attribution, the star
-   diagram (spokes = hub legs, outer rings = local legs), per-node
-   cards with derived end-to-end numbers, and this site's performer
-   panel.
+   (URL / token / room / node name).
+3. At each site, expand **Join devices** at the bottom of the monitor and scan
+   the QR code on each phone. Phones join and answer probes automatically;
+   keep their pages open during the test.
+4. Every site's monitor shows the same flower view: an overall
+   "suitable for performance" banner with fault attribution, the star diagram
+   (spokes = hub legs, outer rings = local legs), per-node cards with derived
+   end-to-end numbers, and this site's performer panel.
 
-You do not need to install Node.js. PNDS App bundles it.
+The monitor follows the App language and theme; the performer page keeps its
+bilingual copy.

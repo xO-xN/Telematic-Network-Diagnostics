@@ -52,6 +52,7 @@ jobs:
           cp manifest.json package.json server.js "$BUNDLE/"
           cp -R lib public node_modules "$BUNDLE/"
           cp .github/bundle/README.md "$BUNDLE/README.md"
+          cp .github/bundle/README.zh-CN.md "$BUNDLE/README.zh-CN.md"
           find "$BUNDLE" -name '.DS_Store' -delete
           find "$BUNDLE" -name '.lh' -type d -prune -exec rm -rf {} +
 
