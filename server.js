@@ -35,8 +35,9 @@
 
 const os = require("node:os");
 const path = require("node:path");
-const express = require("express");
-const { io: ioClient } = require("socket.io-client");
+const libraries = require("./lib/shared-libraries");
+const express = libraries.requireLibrary("express");
+const { io: ioClient } = libraries.requireLibrary("socket.io-client");
 
 const {
   loadManifest,
@@ -95,6 +96,9 @@ const hostLanIp = resolveHostLanIp(process.env.PNDS_HOST_IP);
 const app = express();
 const monitorApp = express();
 
+libraries.attachBrowserRoutes(app);
+libraries.attachBrowserRoutes(monitorApp);
+
 app.use(express.static(path.join(PROJECT_ROOT, "public")));
 monitorApp.use(express.static(path.join(PROJECT_ROOT, "public")));
 
@@ -144,41 +148,32 @@ monitorApp.get("/__pnds/locale-follow.js", (request, response) => {
 // Startup
 // ------------------------------------------------------------
 
-const server = app.listen(serverConfig.performerPort, "0.0.0.0", () => {
+const server = app.listen(serverConfig.performerPort, "0.0.0.0", (error) => {
+  if (error) {
+    console.error(`Performer HTTP server failed on port ${serverConfig.performerPort}:`, error);
+    process.exit(1);
+  }
   printRuntimeInfo();
 });
 
 const monitorServer = monitorApp.listen(
   serverConfig.monitorPort,
   "0.0.0.0",
-  () => {
+  (error) => {
+    if (error) {
+      console.error(`Monitor HTTP server failed on port ${serverConfig.monitorPort}:`, error);
+      process.exit(1);
+    }
     console.log(
       `Monitor page: http://${hostLanIp}:${serverConfig.monitorPort}/`,
     );
   },
 );
 
-server.on("error", (error) => {
-  console.error(
-    `Performer HTTP server failed on port ${serverConfig.performerPort}:`,
-    error,
-  );
-  process.exitCode = 1;
-});
-
-monitorServer.on("error", (error) => {
-  console.error(
-    `Monitor HTTP server failed on port ${serverConfig.monitorPort}:`,
-    error,
-  );
-  process.exitCode = 1;
-});
-
-// Nothing to wait for: no audio engine, so the project is ready as soon
-// as the HTTP servers are up.
+// Network-only readiness does not wait on an audio engine.
 health.setAudioDisabled();
 
-const io = require("socket.io")(server, {
+const io = libraries.requireLibrary("socket.io")(server, {
   cors: {
     origin: "*",
     methods: ["GET", "POST"],

@@ -12,3 +12,6 @@
 4. 各场地的 monitor 呈现同一视图：整体「适合演出与否」横幅与故障归因、星图（辐条 = hub 链路，外环 = 本地链路）、按节点的端到端数据卡片，以及本场的 performer 面板。
 
 monitor 跟随 App 的语言与主题；performer 页保持双语文案。
+
+
+运行条件：本版采用固定 App 共享库，需 PNDS App v1.6.2 或更新且具备 manifest 声明的确切资源。工程包不重复携带运行库；创作机 standalone 调试仍可 npm ci。详情见维护仓库 docs/shared-libraries.md。

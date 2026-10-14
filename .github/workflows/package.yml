@@ -5,7 +5,7 @@ name: Package release
 # deflate) — the canonical distribution format for every PNDS project.
 #
 # PNDS App never runs an install step during a performance, so a released
-# score project has to ship its production dependencies already installed.
+# score project uses the Host's exact shared production libraries.
 #
 # The bundle is assembled from an explicit ALLOWLIST rather than by
 # excluding unwanted paths: anything not named below (hub/ — the relay
@@ -50,7 +50,7 @@ jobs:
         run: |
           mkdir -p "$BUNDLE"
           cp manifest.json package.json server.js "$BUNDLE/"
-          cp -R lib public node_modules "$BUNDLE/"
+          cp -R lib public "$BUNDLE/"
           cp .github/bundle/README.md "$BUNDLE/README.md"
           cp .github/bundle/README.zh-CN.md "$BUNDLE/README.zh-CN.md"
           find "$BUNDLE" -name '.DS_Store' -delete
@@ -60,14 +60,17 @@ jobs:
         run: |
           node -e '
             const fs = require("fs");
-            const deps = Object.keys(require("./package.json").dependencies);
-            const missing = deps.filter(
-              d => !fs.existsSync(`${process.env.BUNDLE}/node_modules/${d}`)
-            );
-            if (missing.length) {
-              throw new Error("missing from bundle: " + missing.join(", "));
+            const manifest = require("./manifest.json");
+            const refs = new Map(manifest.sharedLibraries.map(item => [item.id, item.version]));
+            const deps = Object.entries(require("./package.json").dependencies);
+            const missing = deps.filter(([id, version]) => refs.get(id) !== version);
+            if (missing.length || manifest.schemaVersion !== 2) {
+              throw new Error("uncovered shared dependency: " + JSON.stringify(missing));
             }
-            console.log(`all ${deps.length} production dependencies present`);
+            if (fs.existsSync(`${process.env.BUNDLE}/node_modules`)) {
+              throw new Error("shared bundle must not copy node_modules");
+            }
+            console.log(`all ${deps.length} production dependencies have exact shared references`);
           '
           for f in docs test hub .github .git \
                    .gitignore package-lock.json; do
@@ -81,6 +84,7 @@ jobs:
 
       - name: Smoke-test the bundle
         run: |
+          export PNDS_SHARED_LIBRARIES="$(node scripts/shared-env.cjs)"
           cd "$BUNDLE"
           node server.js --audio-mode none &
           SERVER_PID=$!
@@ -130,7 +134,7 @@ jobs:
             >
             > The `.pnds` bundle installs directly into PNDS App: double-click it
             > (or press ⌘O in the App). It unpacks the `Telematic Network
-            > Diagnostics` project with its `node_modules` directory ready to run.
+            > Diagnostics` project with exact shared references for PNDS App v1.6.2.
             >
             > The relay hub is NOT part of the bundle — it deploys from source
             > onto a public VPS. See `docs/hub-deployment.md` in the repository.

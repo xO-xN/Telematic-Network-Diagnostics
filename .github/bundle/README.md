@@ -26,3 +26,6 @@ A PNDS utility for diagnosing cross-internet (telematic) setups: every site runs
 
 The monitor follows the App language and theme; the performer page keeps its
 bilingual copy.
+
+
+Runtime requirements: PNDS App v1.6.2 or a Host supporting the exact shared libraries in manifest.json. The project bundle carries references and project assets; standalone development can still use npm ci. See docs/shared-libraries.md in the source repository.

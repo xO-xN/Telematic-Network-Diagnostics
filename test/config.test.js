@@ -22,10 +22,10 @@ const PROJECT_ROOT = path.join(__dirname, "..");
 test("manifest carries the Telematic Network Diagnostics identity", () => {
   const manifest = loadManifest(PROJECT_ROOT);
 
-  assert.equal(manifest.schemaVersion, 1);
+  assert.equal(manifest.schemaVersion, 2);
   assert.equal(manifest.id, "telematic-network-diagnostics");
   assert.equal(manifest.name, "Telematic Network Diagnostics");
-  assert.equal(manifest.version, "0.6.1");
+  assert.equal(manifest.version, "0.7.0");
 });
 
 test("manifest is audio none-only (network-only project)", () => {
@@ -109,7 +109,7 @@ test("package.json is de-templatized: identity, no audio dependencies", () => {
   );
 
   assert.equal(packageJson.name, "telematic-network-diagnostics");
-  assert.equal(packageJson.version, "0.6.1");
+  assert.equal(packageJson.version, "0.7.0");
   assert.equal("osc-min" in packageJson.dependencies, false);
   assert.equal("osc-min" in (packageJson.devDependencies || {}), false);
 });
@@ -140,7 +140,8 @@ test("release workflow is de-templatized: TND identity, registry artifact name",
   );
 
   assert.doesNotMatch(assemble, /\bhub\b/, "the allowlist never copies hub/");
-  assert.match(assemble, /cp -R lib public node_modules/);
+  assert.match(assemble, /cp -R lib public /);
+  assert.doesNotMatch(assemble, /cp -R[^\n]*node_modules/);
 
   // The smoke keeps the audio-none launch shape and asserts it.
   const smoke = workflow.slice(
