@@ -163,7 +163,6 @@
           logTitle: "公网腿事件",
           noEvents: "暂无事件",
           scan: "扫码打开演奏者页面",
-          qrAlt: "演奏者页面二维码",
           // The performer card's corner「x」(issue #13) — icon-only on the
           // card, so the word lives just for the aria-label.
           remove: "移除",
@@ -299,7 +298,6 @@
           logTitle: "Hub-leg events",
           noEvents: "No events yet",
           scan: "Scan to open the performer page",
-          qrAlt: "QR code for the performer page",
           remove: "Remove",
           selfTag: "This site",
           performer: "Performer {0}",

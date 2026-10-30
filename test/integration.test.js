@@ -113,8 +113,8 @@ test("score server: TND identity, health ready, pages + theme bridge served", as
   // --- the QR endpoint answers on the monitor port (performer: 404) ---
   const qrResponse = await fetch(`${MONITOR_URL}/qr`);
 
-  assert.equal(qrResponse.status, 200);
-  assert.equal(qrResponse.headers.get("content-type"), "image/png");
+  assert.equal(qrResponse.status, 404);
+
 
   const performerQrResponse = await fetch(`${PERFORMER_URL}/qr`);
   assert.equal(performerQrResponse.status, 404);

@@ -57,7 +57,7 @@ app.innerHTML = `
     <div class="section-head"><h2><span id="local-title" tabindex="-1"></span> <span class="count" id="local-count"></span></h2><span class="section-note" id="local-note"></span></div>
     <div class="local-cards" id="local-cards"></div>
   </section>
-  <footer><p class="hint" id="footer-hint"></p><details class="remote"><summary><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="4.5" y="1.5" width="7" height="13" rx="1.5" stroke="currentColor"/><path d="M7 12h2" stroke="currentColor"/></svg><span id="join-label"></span></summary><div class="qr-row"><img src="/qr" id="qr-img" alt=""/><span id="scan-label"></span></div></details></footer>`;
+  <footer><p class="hint" id="footer-hint"></p></footer>`;
 
 const bannerEl = document.getElementById("banner");
 const bannerCopyEl = document.getElementById("banner-copy");
@@ -88,8 +88,6 @@ const chromeEls = {
   starHint: document.getElementById("star-hint"),
   localTitle: document.getElementById("local-title"),
   logTitle: document.getElementById("log-title"),
-  scan: document.getElementById("scan-label"),
-  qrImg: document.getElementById("qr-img"),
 };
 
 // The copy table of the current locale (Chinese fallback — the table
@@ -341,8 +339,6 @@ function render() {
   chromeEls.starHint.textContent = m.starHint;
   chromeEls.localTitle.textContent = m.localTitle;
   chromeEls.logTitle.textContent = m.logTitle;
-  chromeEls.scan.textContent = m.scan;
-  chromeEls.qrImg.setAttribute("alt", m.qrAlt);
 
   for (const [id, value] of Object.entries({
     "sites-label": m.sites,
@@ -350,7 +346,6 @@ function render() {
     "readings-title": m.readingsTitle,
     "readings-note": m.readingsNote,
     "local-note": m.localNote,
-    "join-label": m.join,
     "footer-hint": m.footerHint,
   }))
     document.getElementById(id).textContent = value;

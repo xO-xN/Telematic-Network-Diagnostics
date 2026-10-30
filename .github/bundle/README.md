@@ -16,8 +16,7 @@ A PNDS utility for diagnosing cross-internet (telematic) setups: every site runs
    [repository](https://github.com/xO-xN/Telematic-Network-Diagnostics)).
    Point the score server at it through the monitor's connection form
    (URL / token / room / node name).
-3. At each site, expand **Join devices** at the bottom of the monitor and scan
-   the QR code on each phone. Phones join and answer probes automatically;
+3. At each site, display the App performer QR and scan it on each phone. Phones join and answer probes automatically;
    keep their pages open during the test.
 4. Every site's monitor shows the same flower view: an overall
    "suitable for performance" banner with fault attribution, the star diagram
@@ -29,3 +28,7 @@ bilingual copy.
 
 
 Runtime requirements: PNDS App v1.6.2 or a Host supporting the exact shared libraries in manifest.json. The project bundle carries references and project assets; standalone development can still use npm ci. See docs/shared-libraries.md in the source repository.
+
+## App performer QR migration
+
+This version removes the project QR interface and `/qr` endpoint. In PNDS App with built-in performer QR, use the bottom bar in performance mode or the Performers button in creation mode to open this project’s performer page. Standalone browsers and older Apps retain the project pages without an in-page QR entry.

@@ -47,7 +47,6 @@ const {
 } = require("./lib/config");
 const { resolveHostLanIp } = require("./lib/network");
 const { HealthTracker } = require("./lib/health");
-const { qrHandler } = require("./lib/qr");
 const { HubLeg } = require("./lib/hub-leg");
 const { overallFromNodes } = require("./lib/flower");
 const { PlayerRegistry } = require("./lib/players");
@@ -123,12 +122,6 @@ const health = new HealthTracker({
 
 app.get("/__pnds/health", health.handler());
 monitorApp.get("/__pnds/health", health.handler());
-
-// QR code for the performer page, shown on the monitor page.
-monitorApp.get(
-  "/qr",
-  qrHandler(`http://${hostLanIp}:${serverConfig.performerPort}/`),
-);
 
 // The lib/ files the monitor page loads in the browser: the theme and
 // locale bridge modules (App contract — theme spec §5.3, network
