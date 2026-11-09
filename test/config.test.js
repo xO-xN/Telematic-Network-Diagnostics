@@ -25,7 +25,7 @@ test("manifest carries the Telematic Network Diagnostics identity", () => {
   assert.equal(manifest.schemaVersion, 2);
   assert.equal(manifest.id, "telematic-network-diagnostics");
   assert.equal(manifest.name, "Telematic Network Diagnostics");
-  assert.equal(manifest.version, "0.8.0");
+  assert.equal(manifest.version, "0.8.1");
 });
 
 test("manifest is audio none-only (network-only project)", () => {
@@ -109,7 +109,7 @@ test("package.json is de-templatized: identity, no audio dependencies", () => {
   );
 
   assert.equal(packageJson.name, "telematic-network-diagnostics");
-  assert.equal(packageJson.version, "0.8.0");
+  assert.equal(packageJson.version, "0.8.1");
   assert.equal("osc-min" in packageJson.dependencies, false);
   assert.equal("osc-min" in (packageJson.devDependencies || {}), false);
 });

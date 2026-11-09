@@ -323,9 +323,9 @@ test('page wiring: the ?theme= first frame reaches the onTheme hook at load time
 
 test('both diagnostic ports load the theme and identity-color hook exactly once', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8')
-  assert.equal((html.match(/src="\/__pnds\/theme-follow\.js"/g) || []).length, 1)
+  assert.equal((html.match(/src="\.\/__pnds\/theme-follow\.js"/g) || []).length, 1)
   assert.doesNotMatch(html, /performer\.js|PNDS_IS_MONITOR/)
-  assert.ok(html.indexOf('PNDS_THEME_OPTIONS') < html.indexOf('src="/__pnds/theme-follow.js"'))
+  assert.ok(html.indexOf('PNDS_THEME_OPTIONS') < html.indexOf('src="./__pnds/theme-follow.js"'))
 })
 
 // ---------------------------------------------------------------------------

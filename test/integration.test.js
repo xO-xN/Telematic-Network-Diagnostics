@@ -22,21 +22,32 @@ const HUB_LOCATION = { label: "测试中继", latitude: 32.04, longitude: 118.77
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function scoreFixture(t, hubConfig = {}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "tnd-internet-test-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), ".tnd-internet-test-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   for (const name of ["server.js", "lib", "public"]) {
     fs.cpSync(path.join(PROJECT_ROOT, name), path.join(root, name), { recursive: true });
   }
   fs.symlinkSync(path.join(PROJECT_ROOT, "node_modules"), path.join(root, "node_modules"), "dir");
-  const performerPort = await findFreePort();
-  let monitorPort = await findFreePort();
-  while (monitorPort === performerPort) monitorPort = await findFreePort();
+  const listeners = [];
+  for (let index = 0; index < 2; index++) {
+    const listener = net.createServer();
+    await new Promise((resolve, reject) => {
+      listener.once("error", reject); listener.listen(0, "127.0.0.1", resolve);
+    });
+    listeners.push(listener);
+  }
+  const services = listeners.map((listener, index) => ({
+    role: index ? "monitor" : "performer", fd: index + 3, port: listener.address().port,
+  }));
+  const performerPort = services[0].port, monitorPort = services[1].port;
   const manifest = JSON.parse(fs.readFileSync(path.join(PROJECT_ROOT, "manifest.json"), "utf8"));
   Object.assign(manifest.scoreServer, { performerPort, monitorPort });
   fs.writeFileSync(path.join(root, "manifest.json"), JSON.stringify(manifest));
   const env = {
     ...process.env,
     PNDS_HOST_IP: "127.0.0.1",
+    PNDS_RUNTIME_PORTS: JSON.stringify({ version: 1, runId: "tnd-integration",
+      reportPath: path.join(root, "bound.json"), services }),
     PNDS_HUB_URL: hubConfig.url || "",
     PNDS_HUB_TOKEN: hubConfig.token || "",
     PNDS_HUB_ROOM: hubConfig.room || "",
@@ -44,8 +55,9 @@ async function scoreFixture(t, hubConfig = {}) {
   };
   delete env.PNDS_SHARED_LIBRARIES;
   const child = spawn(process.execPath, ["server.js", "--audio-mode", "none"], {
-    cwd: root, env, stdio: ["ignore", "pipe", "pipe"],
+    cwd: root, env, stdio: ["ignore", "pipe", "pipe", ...listeners.map(listener => listener._handle.fd)],
   });
+  await Promise.all(listeners.map(listener => new Promise(resolve => listener.close(resolve))));
   let output = "";
   for (const stream of [child.stdout, child.stderr]) {
     stream.on("data", (chunk) => { output = (output + chunk.toString()).slice(-4000); });

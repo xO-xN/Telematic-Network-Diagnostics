@@ -5,17 +5,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Telematic Network Diagnostics</title>
     <link rel="stylesheet" href="style.css" />
+    <script src="./__pnds/context.js"></script>
     <script src="__config.js"></script>
     <script src="shared.js"></script>
     <script src="geography.js"></script>
     <script src="land.js"></script>
+    <script src="./__pnds/shared/socket.io.js"></script>
     <script>
       // Both required runtime ports expose the diagnostic console. No
       // performer registration or local-network probe runs on either page.
-      document.write(
-        '\x3Cscript src="http://' + location.hostname + ":" +
-        window.PNDS.performerPort + '/__pnds/shared/socket.io.js"\x3E\x3C/script\x3E',
-      );
       window.PNDS_THEME_OPTIONS = {
         derive: function (palette) {
           return window.PNDS_THEME.statusVariables(palette);
@@ -39,8 +37,8 @@
         },
       };
     </script>
-    <script src="/__pnds/theme-follow.js"></script>
-    <script src="/__pnds/locale-follow.js"></script>
+    <script src="./__pnds/theme-follow.js"></script>
+    <script src="./__pnds/locale-follow.js"></script>
     <script defer src="monitor.js"></script>
   </head>
   <body><main id="app"></main></body>

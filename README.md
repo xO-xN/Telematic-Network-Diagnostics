@@ -12,6 +12,29 @@ Version 0.8.0 introduces the internet-only diagnostic and regional map. PNDS App
 fetches the verified version and checksum pinned in its own `utilities.json`;
 updating the tool source alone does not change that built-in reference.
 
+### Unified Host entry (0.8.1)
+
+On a Host supporting browser participation protocol 1, open the Host's saved LAN
+entry and explicitly enter the displayed performance. The diagnostic page, local
+map assets and observer connection stay within that confirmed performance; an old
+page cannot configure a replacement run. The same page prepares after receiving
+an actual diagnostic snapshot, even when no HUB is configured. This confirms page
+resources, not a successful internet measurement. Stopping the Host revokes its
+network connection while the loaded document can retain its last view.
+
+The local entry and assets need no WAN once the Host's exact shared libraries are
+ready. HUB measurements, peer updates and optional IP lookup still need their
+existing network path; a WAN outage is reported as lost/unconfirmed data. This
+version keeps the 0.8.0 internet-only scope, regional geography and legacy HUB
+compatibility. There are no new local Wi-Fi probes or phone enrollments.
+
+Browser connection settings are stored per Host/project. Native Client private
+origins retain their existing recovery data. Changing browser origin/address or
+using another saved app does not promise migration. Standalone ports still work;
+App-managed starts adopt its actual assigned ports rather than assuming 6868/6869.
+Existing HTTPS access remains usable; saving an icon grants no secure-context API
+permissions. This tool does not request microphone, camera or sensor capture.
+
 ### Reading the diagnostic
 
 - Geographic view fits the nodes and the known HUB position with a little margin.
@@ -144,6 +167,23 @@ Neither source update automatically changes an existing deployed HUB.
 0.8.0 版改为仅诊断公网链路，并加入区域地图。PNDS App 按自身
 `utilities.json` 中固定的版本及校验和拉取已验证工具；更新工具源码本身
 不会改变 App 的内置引用。
+
+### 统一池主入口（0.8.1）
+
+在支持浏览器演奏接入协议 1 的池主上，打开已保存的 LAN 入口，明确进入显示的
+本次演出。诊断页面、本地地图资源及观察连接均归属于这次确认；旧页面不能配置
+替代演出。页面收到真实诊断快照后报告准备完成，即使尚未配置 HUB 也可显示。
+这只证明页面资源可用，不代表互联网测量成功。池主停止后撤销网络访问，已加载
+文档可保留最后视图。
+
+池主的确切共享库就绪后，本地入口及页面资源不需要 WAN。HUB 测量、远端更新
+及可选 IP 定位仍需要原有网络条件；WAN 中断时如实显示断开／待确认。本版保留
+0.8.0 的仅公网诊断、区域地图与旧 HUB 兼容，不新增本地 Wi-Fi 探测或手机注册。
+
+浏览器连接设置按池主／工程保存；原生池客的私有来源保留既有恢复数据。改变
+浏览器来源、地址或图标实例不保证数据迁移。独立地址继续可用；App 托管运行采用
+实际分配端口，不假定始终为 6868／6869。已有 HTTPS 路径继续可用；保存图标不授予
+安全上下文 API 权限。本工具不请求麦克风、摄像头或传感器采集。
 
 ### 查看诊断
 

@@ -2,14 +2,17 @@
   "schemaVersion": 2,
   "id": "telematic-network-diagnostics",
   "name": "Telematic Network Diagnostics",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "PNDS internet-only network diagnostics: measures each node to its public HUB and shows linked geographic and topology views.",
   "telematic": true,
   "scoreServer": {
     "entry": "server.js",
     "workingDirectory": ".",
     "performerPort": 6868,
-    "monitorPort": 6869
+    "monitorPort": 6869,
+    "runtimePorts": 1,
+    "browserParticipation": 1,
+    "supportsPerformerUrl": true
   },
   "audio": {
     "defaultMode": "none",

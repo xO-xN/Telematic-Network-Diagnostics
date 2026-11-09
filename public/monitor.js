@@ -44,7 +44,14 @@
   const records = new Map(), colorSlots = new Map();
   let plotted = [];
   const activeId = () => hovered || focused || selected;
-  const socket = io("http://" + location.hostname + ":" + P.performerPort, { reconnection: true });
+  const participation = window.PNDS_PARTICIPATION;
+  const sameOrigin = participation || location.port !== String(P.monitorPort);
+  const socket = io(sameOrigin ? location.origin : "http://" + location.hostname + ":" + P.performerPort,
+    { reconnection: true, ...(participation?.socketOptions || {}) });
+  // Native origins are already private per Host/project; retain their legacy data.
+  const hubConfigKey = participation && participation.basePath !== "/"
+    ? participation.storageKey(P.storageKeys.hubConfig) : P.storageKeys.hubConfig;
+  let preparationReported = false;
   const ownName = () => state?.activeConfig?.nodeId || state?.env?.nodeId || copy().self;
   const placeName = place => place.label || place.latitude.toFixed(3) + ", " + place.longitude.toFixed(3);
   const locationOf = node => G.validLocation(node.network?.location) ? node.network.location : null;
@@ -80,7 +87,7 @@
     return `var(--node-${colorSlots.get(id)})`;
   }
   function loadSavedConfig() {
-    try { const value = JSON.parse(localStorage.getItem(P.storageKeys.hubConfig) || "null"); return value && typeof value === "object" ? value : {}; }
+    try { const value = JSON.parse(localStorage.getItem(hubConfigKey) || "null"); return value && typeof value === "object" ? value : {}; }
     catch { return {}; }
   }
   function prefillForm() {
@@ -332,6 +339,10 @@
       el("location-save").disabled = false; el("location-reset").disabled = false;
     }
     configurationKey = nextKey; state = next; render();
+    if (!preparationReported) {
+      participation?.reportPrepared();
+      preparationReported = true;
+    }
   });
   L.subscribe(render);
   app.querySelectorAll("[data-view]").forEach(button => button.addEventListener("click", () => { view = button.dataset.view; render(); }));
@@ -339,7 +350,7 @@
   el("map-stage").addEventListener("pointerleave", () => setHover(null));
   el("connection-form").addEventListener("submit", event => {
     event.preventDefault(); const config = formConfig(); if (!socket.connected || observationLost || !config.url || !config.token) return;
-    try { localStorage.setItem(P.storageKeys.hubConfig, JSON.stringify(config)); } catch { /* Connection remains usable when browser storage is unavailable. */ }
+    try { localStorage.setItem(hubConfigKey, JSON.stringify(config)); } catch { /* Connection remains usable when browser storage is unavailable. */ }
     socket.emit(P.events.hubConfig, config);
   });
   for (const input of el("connection-form").querySelectorAll("input")) input.addEventListener("input", renderConnect);

@@ -25,6 +25,29 @@ The tool follows the App's theme and English/简体中文 language. Browser page
 observe the node's internet measurement; there is no phone enrollment or local
 Wi-Fi testing.
 
+### Unified Host entry (0.8.1)
+
+On a Host supporting browser participation protocol 1, open the Host's saved LAN
+entry and explicitly enter the displayed performance. The diagnostic page, local
+map assets and observer connection stay within that confirmed performance; an old
+page cannot configure a replacement run. The same page prepares after receiving
+an actual diagnostic snapshot, even when no HUB is configured. This confirms page
+resources, not a successful internet measurement. Stopping the Host revokes its
+network connection while the loaded document can retain its last view.
+
+The local entry and assets need no WAN once the Host's exact shared libraries are
+ready. HUB measurements, peer updates and optional IP lookup still need their
+existing network path; a WAN outage is reported as lost/unconfirmed data. This
+version keeps the 0.8.0 internet-only scope, regional geography and legacy HUB
+compatibility. There are no new local Wi-Fi probes or phone enrollments.
+
+Browser connection settings are stored per Host/project. Native Client private
+origins retain their existing recovery data. Changing browser origin/address or
+using another saved app does not promise migration. Standalone ports still work;
+App-managed starts adopt its actual assigned ports rather than assuming 6868/6869.
+Existing HTTPS access remains usable; saving an icon grants no secure-context API
+permissions. This tool does not request microphone, camera or sensor capture.
+
 ## Readings and locations
 
 RTT p50/p95, jitter (IQR), loss and reconnects use a 15-second rolling window.

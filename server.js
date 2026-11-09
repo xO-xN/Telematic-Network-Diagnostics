@@ -5,6 +5,8 @@
 // The only measured path is this score server's outbound link to HUB.
 
 const os = require("node:os");
+const http = require("node:http");
+const runtimePorts = require("./lib/runtime-ports");
 const path = require("node:path");
 const libraries = require("./lib/shared-libraries");
 const express = libraries.requireLibrary("express");
@@ -47,6 +49,7 @@ const monitorApp = express();
 // Both entry points follow App theme/locale and use exact shared assets.
 for (const httpApp of [app, monitorApp]) {
   libraries.attachBrowserRoutes(httpApp);
+  httpApp.get("/__pnds/context.js", (_request, response) => response.type("application/javascript").send(""));
   httpApp.use(express.static(path.join(PROJECT_ROOT, "public")));
   httpApp.get("/__config.js", (_request, response) => {
     response.type("application/javascript").send(
@@ -54,10 +57,10 @@ for (const httpApp of [app, monitorApp]) {
     );
   });
   httpApp.get("/__pnds/theme-follow.js", (_request, response) => {
-    response.sendFile(path.join(PROJECT_ROOT, "lib", "theme-follow.js"));
+    response.sendFile("theme-follow.js", { root: path.join(PROJECT_ROOT, "lib") });
   });
   httpApp.get("/__pnds/locale-follow.js", (_request, response) => {
-    response.sendFile(path.join(PROJECT_ROOT, "lib", "locale-follow.js"));
+    response.sendFile("locale-follow.js", { root: path.join(PROJECT_ROOT, "lib") });
   });
 }
 
@@ -66,30 +69,30 @@ const health = new HealthTracker({
   audioMode: "none",
   performerPort: serverConfig.performerPort,
   monitorPort: serverConfig.monitorPort,
+  runtimeRunId: serverConfig.runtimeAssignment?.runId,
 });
 
 app.get("/__pnds/health", health.handler());
 monitorApp.get("/__pnds/health", health.handler());
 
-const server = app.listen(serverConfig.performerPort, "0.0.0.0", (error) => {
-  if (error) {
-    console.error(`Diagnostic HTTP server failed on port ${serverConfig.performerPort}:`, error);
-    process.exit(1);
-  }
+const server = http.createServer(app);
+const monitorServer = http.createServer(monitorApp);
+Promise.all([
+  runtimePorts.listen(server, "performer", serverConfig),
+  runtimePorts.listen(monitorServer, "monitor", serverConfig),
+]).then(() => {
+  runtimePorts.report(serverConfig.runtimeAssignment, "bound");
+  health.setAudioDisabled();
   console.log(`[server] ${manifest.name} v${manifest.version}`);
   console.log("[server] audio: disabled (internet-only diagnostic)");
   console.log(`[server] diagnostic: http://${hostLanIp}:${serverConfig.performerPort}/`);
-});
-
-const monitorServer = monitorApp.listen(serverConfig.monitorPort, "0.0.0.0", (error) => {
-  if (error) {
-    console.error(`Monitor HTTP server failed on port ${serverConfig.monitorPort}:`, error);
-    process.exit(1);
-  }
   console.log(`[server] monitor: http://${hostLanIp}:${serverConfig.monitorPort}/`);
+}).catch(error => {
+  try { runtimePorts.report(serverConfig.runtimeAssignment, "error", error); }
+  catch (reportError) { console.error("Runtime listener report failed:", reportError); }
+  console.error("Diagnostic HTTP listener failed:", error);
+  process.exit(1);
 });
-
-health.setAudioDisabled();
 
 const io = libraries.requireLibrary("socket.io")(server, {
   cors: { origin: "*", methods: ["GET", "POST"] },
