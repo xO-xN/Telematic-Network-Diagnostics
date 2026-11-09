@@ -166,8 +166,8 @@ test('options.derive adds per-palette variables (statusVariables is one)', () =>
     derive: statusVariables,
   })
 
-  assert.equal(variables['--green'], '#15803d')
-  assert.equal(variables['--red'], '#e11d48', 'red maps the App danger directly')
+  assert.ok(contrast(variables['--green'], SPEC_MESSAGE.palette.card) >= 4.5)
+  assert.ok(contrast(variables['--red'], SPEC_MESSAGE.palette.card) >= 4.5)
 })
 
 // ---------------------------------------------------------------------------
@@ -187,6 +187,14 @@ test('all four App themes keep text, muted, active-fill and status colors ≥4.5
       ['--yellow', palette.card],
       ['--gray', palette.card],
       ['--red', palette.card],
+      ['--green', palette.bg],
+      ['--yellow', palette.bg],
+      ['--gray', palette.bg],
+      ['--red', palette.bg],
+      ['--green', palette.pill],
+      ['--yellow', palette.pill],
+      ['--gray', palette.pill],
+      ['--red', palette.pill],
     ]) {
       const ratio = contrast(variables[variable] || status[variable], surface)
       assert.ok(
@@ -205,9 +213,9 @@ test('?theme= paints a first frame; absence keeps the page\'s own colors', () =>
   assert.equal(initialTheme('?theme=stage'), 'stage')
   assert.equal(initialTheme('?theme=STAGE'), 'stage', 'casing is tolerated')
   assert.equal(initialTheme('?a=1&theme=sand'), 'sand')
-  assert.equal(initialVariables('?theme=stage')['--bg'], '#0b0c10')
+  assert.equal(initialVariables('?theme=stage')['--bg'], '#171b1c')
   assert.equal(initialVariables('?theme=brutal')['--accent'], '#ff5722')
-  assert.equal(initialVariables('?theme=lavender')['--bg'], '#eef0f8')
+  assert.equal(initialVariables('?theme=lavender')['--bg'], '#f1f5f8')
 
   // At least a light/dark fork between themes.
   const light = initialVariables('?theme=lavender')
@@ -263,7 +271,7 @@ test('monitor page wiring: message → documentElement CSS variables', () => {
 
   // The listener painted before the first paint when ?theme= was present.
   const prePainted = loadMonitorPage('?theme=stage')
-  assert.equal(prePainted.properties.get('--bg'), '#0b0c10')
+  assert.equal(prePainted.properties.get('--bg'), '#171b1c')
 })
 
 test('monitor page wiring: malformed events never throw or write', () => {
@@ -310,30 +318,14 @@ test('page wiring: the ?theme= first frame reaches the onTheme hook at load time
 
   assert.equal(stash.length, 1, 'the initial ?theme= delivery fired early')
   assert.equal(stash[0].name, 'stage')
-  assert.equal(stash[0].palette.bg, '#0b0c10')
+  assert.equal(stash[0].palette.bg, '#171b1c')
 })
 
-test('page wiring: theme-follow loads only in the monitor branch', () => {
+test('both diagnostic ports load the theme and identity-color hook exactly once', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8')
-
-  // The module load sits inside the monitor branch (anchored on the
-  // document.write call — comments may mention the name too).
-  const monitorBranch = html.slice(html.indexOf('PNDS_IS_MONITOR'))
-  assert.match(
-    monitorBranch,
-    /if \(window\.PNDS_IS_MONITOR\) \{[\s\S]*document\.write\(\s*'\\x3Cscript src="\/__pnds\/theme-follow\.js/,
-    'the monitor branch loads the theme bridge',
-  )
-
-  // …and the performer branch has no hand in theming: everything after
-  // the theme write is the page body, with no second module load.
-  const themeLoad = monitorBranch.indexOf('__pnds/theme-follow.js')
-  assert.ok(themeLoad !== -1)
-  assert.equal(
-    monitorBranch.indexOf('__pnds/theme-follow.js', themeLoad + 1),
-    -1,
-    'the theme bridge is loaded exactly once',
-  )
+  assert.equal((html.match(/src="\/__pnds\/theme-follow\.js"/g) || []).length, 1)
+  assert.doesNotMatch(html, /performer\.js|PNDS_IS_MONITOR/)
+  assert.ok(html.indexOf('PNDS_THEME_OPTIONS') < html.indexOf('src="/__pnds/theme-follow.js"'))
 })
 
 // ---------------------------------------------------------------------------
@@ -353,3 +345,33 @@ function applyVariables(root, variables) {
     root.style.setProperty(name, variables[name])
   }
 }
+
+test('node identity fills retain readable quality text in all four selected-row colors', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8')
+  const root = fakeStyleRoot()
+  const page = { document: { documentElement: { style: root.style, setAttribute() {} }, write() {} }, location: { hostname: 'localhost' }, PNDS: { performerPort: 6868 } }
+  page.window = page
+  const context = vm.createContext(page)
+  for (const script of html.matchAll(/<script>([\s\S]*?)<\/script>/g)) vm.runInContext(script[1], context)
+  for (const name of ['pond', 'sand', 'stage', 'brutal']) {
+    page.PNDS_THEME_OPTIONS.onTheme(name)
+    const palette = THEME_PALETTES[name], status = statusVariables(palette)
+    const colors = Array.from({ length: 5 }, (_, index) => root.properties.get('--node-' + index))
+    assert.equal(new Set(colors).size, 5)
+    for (const color of colors) {
+      const selected = '#' + [0, 1, 2].map(index => Math.round(parseInt(color.slice(1 + index * 2, 3 + index * 2), 16) * .1 + parseInt(palette.card.slice(1 + index * 2, 3 + index * 2), 16) * .9).toString(16).padStart(2, '0')).join('')
+      for (const ink of Object.values(status)) assert.ok(contrast(ink, selected) >= 4.5, `${name}: status ink on selected row`)
+    }
+  }
+})
+
+test('theme attachment deduplicates repeated values and disposes its listener', () => {
+  const api = require('../lib/theme-follow')
+  const listeners = new Set(), delivered = []
+  const root = { location: { search: '?theme=pond' }, addEventListener: (name, fn) => listeners.add(fn), removeEventListener: (name, fn) => listeners.delete(fn) }
+  const off = api.attach(root, { applyVariables: false, onTheme: name => delivered.push(name) })
+  assert.deepEqual(delivered, ['pond'])
+  for (const listener of listeners) listener({ data: { type: 'pnds:theme', version: 1, theme: 'pond', palette: THEME_PALETTES.pond } })
+  assert.deepEqual(delivered, ['pond'])
+  off(); off(); assert.equal(listeners.size, 0)
+})

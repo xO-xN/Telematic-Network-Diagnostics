@@ -1,455 +1,290 @@
-// Shared constants for both browser pages and the score server.
-//
-// Works as a plain browser global (window.PNDS) and as a Node module.
-//
-// Single source of truth:
-//   Ports    → manifest.json (browser gets them via __config.js injected by the server)
-//   Events   → here (events)
-//   Copy     → here (copy — bilingual, one table per locale)
-//   Storage  → here (storageKeys)
-
+// Internet diagnostic wire names and bilingual copy. No performer/local-test API.
 (function (root, factory) {
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = factory({ readPorts: readManifestPorts });
-  } else {
-    root.PNDS = factory({
-      readPorts: function () {
-        var cfg = root.__PNDS_PORTS__;
-        if (!cfg)
-          throw new Error(
-            "__PNDS_PORTS__ not set — ensure __config.js loads before shared.js",
-          );
-        return cfg;
-      },
-    });
-  }
-})(typeof self !== "undefined" ? self : this, function (deps) {
-  var ports = deps.readPorts();
-
+    const fs = require("node:fs"), path = require("node:path");
+    const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "manifest.json"), "utf8"));
+    module.exports = factory(manifest.scoreServer);
+  } else root.PNDS = factory(root.__PNDS_PORTS__);
+})(typeof self !== "undefined" ? self : this, function (ports) {
+  if (!ports) throw new Error("__PNDS_PORTS__ must load before shared.js");
   return {
-    // Read from manifest.json (or __config.js in the browser).
-    // Change ports ONLY in manifest.json.
-    performerPort: ports.performerPort,
-    monitorPort: ports.monitorPort,
-
-    // The room a hub connection lands in when none is given (matches
-    // the hub's own default).
+    performerPort: ports.performerPort, monitorPort: ports.monitorPort,
     defaultRoom: "default",
-
-    // UI copy, per locale (bilingual since v0.2.0). Keys are
-    // language-neutral; the monitor page renders through the table of
-    // the current locale (lib/locale-follow.js follows the App
-    // language, default "zh-CN" — this project's historical UI). The
-    // server's state carries only the reason KEYS (lib/hub-leg.js,
-    // lib/local-leg.js); reasonParams are preformatted values for the
-    // {0}/{1} placeholders. "zh-CN" doubles as the fallback table; a
-    // session with no locale traffic renders exactly as before.
-    // test/locale-follow.test.js asserts both tables share one shape.
+    events: { state: "state", hubConfig: "hub:config", setLocation: "set-location" },
+    storageKeys: { hubConfig: "tnd-hub-config" },
     copy: {
-      "zh-CN": {
-        // Hub-leg status lines (own card, peer cards).
-        hubStatus: {
-          idle: "未连接 — 请先配置 hub",
-          gray: "预热中",
-          green: "hub 链路质量良好",
-          yellow: "注意 — hub 链路临界",
-          red: "hub 链路差或不可达",
-        },
-        // Local-leg status lines (performer cards).
-        localStatus: {
-          gray: "预热中…",
-          green: "本地网络良好",
-          yellow: "注意 — 本地网络临界",
-          red: "本地网络差或演奏者掉线",
-        },
-        // The overall banner's network-wide verdict.
-        overall: {
-          idle: "未连接 — 请先配置 hub",
-          gray: "测量中",
-          green: "适宜演奏",
-          yellow: "临界网络，谨慎",
-          red: "不适宜演出",
-        },
-        // Hub-leg reasons (lib/hub-leg.js keys + params). The three
-        // disconnected causes (#16) each name their fix: the token and
-        // the node name live in the App's node settings; transport is
-        // the hub/network itself.
-        hubReasons: {
-          unreachable: "hub 不可达",
-          warmup: "预热中",
-          invalidToken: "token 无效——去 App「节点」栏核对 hub token",
-          nodeNameTaken: "节点名被占用——去 App 改节点名",
-          transport: "传输故障——hub 宕机或网络不通",
-          reconnectsRed: "最近 {1} 秒内重连 {0} 次",
-          jitterRed: "抖动（IQR）{0} ms ≥ {1} ms",
-          lossRed: "丢包率 {0}% ≥ {1}%",
-          linkGood: "链路质量良好",
-          reconnectYellow: "最近 {0} 秒内 1 次重连",
-          jitterYellow: "抖动（IQR）{0} ms ≥ {1} ms",
-          lossYellow: "丢包率 {0}% ≥ {1}%",
-        },
-        // Local-leg reasons (lib/local-leg.js keys, LND's vocabulary).
-        localReasons: {
-          warmup: "预热中",
-          disconnected: "已断开",
-          consecutiveTimeouts: "连续 3 次探针超时",
-          burstTimeoutRate: "突发期超时率超过 5%",
-          jitter: "时间抖动过大",
-          rtt: "响应过慢",
-          timeout: "近期探针超时",
-          green: "本地网络良好",
-          outsideSafe: "超出安全阈值",
-        },
-        // Event-log labels (hub-leg + local-leg event types). `left` and
-        // `removed` are SITE-level local events (the performer's card is
-        // already gone when they fire) — {0} fills with the client id;
-        // the wording says WHO deleted it (the performer itself, or the
-        // monitor's「x」).
-        events: {
-          connected: "已连接",
-          disconnected: "已断开",
-          reconnected: "已重连",
-          stopped: "已停止",
-          "connect failed": "连接失败",
-          left: "client {0} 退出（performer）",
-          removed: "client {0} 移除（monitor）",
-        },
-        // Event details the server itself words (external diagnostics
-        // — socket.io reasons, error messages — stay raw).
-        eventDetails: {
-          noHubConfigured: "未配置 hub",
-        },
-        monitor: {
-          sites: "在线站点",
-          networkTitle: "网络拓扑",
-          readingsTitle: "站点读数",
-          readingsNote: "公网延迟与链路质量分别判断",
-          localNote: "本地 Wi-Fi 测量",
-          join: "设备加入",
-          footerHint: "手机保持页面打开，测量会自动进行。",
-          offline: "离线",
-          statusWord: {
-            idle: "未连接",
-            gray: "预热",
-            green: "就绪",
-            yellow: "注意",
-            red: "风险",
-          },
-          sub: "监视端 — 全网视图",
-          overallLabel: "总体",
-          formTitle: "Hub 连接",
-          formUrl: "Hub URL",
-          formToken: "Token",
-          formRoom: "Room",
-          formNode: "节点名",
-          formNodePlaceholder: "站点名",
-          connect: "连接",
-          // The connect button's other three states (#12): rendered
-          // from server truth (leg.connected / everConnected) plus the
-          // form-vs-activeConfig dirty check.
-          connecting: "连接中…",
-          connected: "已连接",
-          reconnect: "重新连接",
-          formHint:
-            "检查 Hub、Token 和站点名，再连接。App 内的修改用于当前会话。",
-          starHint:
-            "辐条 = hub 腿（标注 RTT p50，颜色 = 质量）；外环 = 本地腿（灰 = 无数据）",
-          starNotConnected: "未连接 hub — 连接后显示全网星型图",
-          selfBadge: "本站",
-          localTitle: "本地腿 — 本站演奏者",
-          countOnline: "· {0} 在线",
-          emptyLocal:
-            "暂无演奏者 — 展开下方「设备加入」并扫码，手机连上即自动测量",
-          logTitle: "公网腿事件",
-          noEvents: "暂无事件",
-          scan: "扫码打开演奏者页面",
-          // The performer card's corner「x」(issue #13) — icon-only on the
-          // card, so the word lives just for the aria-label.
-          remove: "移除",
-          selfTag: "本站",
-          performer: "演奏者 {0}",
-          ownFallback: "本站",
-          rttP50: "RTT p50 典型往返",
-          rttP95: "RTT p95 尾部往返",
-          oneWay: "单程估计 ≈ RTT/2",
-          jitterIqr: "抖动（IQR）",
-          jitterP95: "抖动 p95",
-          loss: "丢包",
-          performers: "演奏者",
-          localLeg: "本地腿",
-          noData: "无数据",
-          sitePair: "站点对",
-          perfPair: "演奏者对",
-          segLocal: "本地",
-          segHub: "hub",
-          waitSite: "等待两段测量",
-          waitPerf: "等待本地腿测量",
-          peerUnreachable: "对端不可达",
-          // Banner attribution templates ({node} = the peer's id).
-          attribHubRed: "问题在 {node} 公网腿",
-          attribHubYellow: "临界：{node} 公网腿",
-          attribLocalRed: "问题在 {node} 本地腿",
-          attribLocalYellow: "临界：{node} 本地腿",
-          attribSelfHubRed: "问题在本站公网腿",
-          attribSelfHubYellow: "临界：本站公网腿",
-          attribSelfLocalRed: "问题在本站本地腿",
-          attribSelfLocalYellow: "临界：本站本地腿",
-        },
-        ago: { just: "刚刚", seconds: " 秒前", minutes: " 分钟前" },
+  "zh-CN": {
+    "internet": {
+      "sub": "公网连接诊断",
+      "authFailed": "节点认证失败",
+      "observationLost": "诊断数据连接中断，等待恢复",
+      "observationRecover": "暂时无法确认节点的实时状态，等待诊断数据恢复。",
+      "shortReconnects": "重连 {0} 次",
+      "sites": "在线节点",
+      "hub": "HUB 中继",
+      "hubUnknown": "中继位置未知",
+      "connection": "连接信息",
+      "node": "节点",
+      "status": "状态",
+      "rtt": "RTT ms",
+      "jitter": "抖动 ms",
+      "loss": "丢包 %",
+      "readings": "节点 ↔ HUB",
+      "window": "最近 15 秒",
+      "fineprint": "RTT 为典型往返时间，抖动为 IQR。稳定性由抖动、丢包和重连判断。",
+      "geography": "地理",
+      "topology": "拓扑",
+      "viewLabel": "连接图视图",
+      "mapTitle": "节点连接 · 自动范围",
+      "topologyTitle": "节点连接 · 拓扑",
+      "mapDescription": "按已知节点与中继的地理位置自动取景；圆点颜色区分节点，方形为中继。",
+      "topologyDescription": "中继居中、节点均匀排列的公网拓扑。",
+      "legend": "颜色区分节点 · 方形为中继",
+      "hover": "悬停节点查看下方详情",
+      "self": "本站",
+      "unknownLocation": "位置未知",
+      "emptyMap": "尚无可用位置",
+      "emptyHint": "位置未知的节点见下方列表，也可切换拓扑。",
+      "mapPartial": "部分位置未知 · 见下方列表",
+      "approxScale": "约 {0} km",
+      "online": "{0} / {1} 节点在线",
+      "known": "{0} 个已知节点",
+      "stableReason": "各节点到 HUB 的链路稳定",
+      "sampling": "仍有节点采样中",
+      "samplingReason": "正在收集链路样本",
+      "connecting": "正在连接 HUB",
+      "connectingReason": "连接后自动开始采样",
+      "disconnected": "本站与 HUB 断开",
+      "unknownRemote": "待确认",
+      "unknownReason": "本站与 HUB 的连接中断，无法确认远端当前状态。",
+      "stale": "数据中断",
+      "staleAge": "{0} 秒未更新",
+      "staleReason": "未收到此节点的更新。保留上次位置，历史读数不作为实时结果。",
+      "unconfigured": "请先配置 HUB",
+      "unconfiguredReason": "在连接信息中填写 HUB 地址、Token 和节点名。",
+      "reconnect": "重新连接",
+      "quality": {
+        "idle": "未连接",
+        "gray": "采样中",
+        "green": "稳定",
+        "yellow": "需注意",
+        "red": "异常"
       },
-      en: {
-        hubStatus: {
-          idle: "Not connected — configure the hub",
-          gray: "Warming up",
-          green: "Hub link quality good",
-          yellow: "Caution — borderline hub link",
-          red: "Hub link poor or unreachable",
-        },
-        localStatus: {
-          gray: "Warming up…",
-          green: "Local network good",
-          yellow: "Caution — borderline local network",
-          red: "Local network poor or performer offline",
-        },
-        overall: {
-          idle: "Not connected — configure the hub",
-          gray: "Measuring…",
-          green: "Suitable for performance",
-          yellow: "Caution — borderline network",
-          red: "Not suitable for performance",
-        },
-        hubReasons: {
-          unreachable: "Hub unreachable",
-          warmup: "Warming up",
-          invalidToken:
-            "Invalid hub token — fix the token in the App's node settings",
-          nodeNameTaken: "Node name taken — change the node name in the App",
-          transport: "Transport failure — hub down or network unreachable",
-          reconnectsRed: "{0} reconnects in the last {1}s",
-          jitterRed: "Jitter (IQR) {0} ms ≥ {1} ms",
-          lossRed: "Loss {0}% ≥ {1}%",
-          linkGood: "Link quality good",
-          reconnectYellow: "1 reconnect in the last {0}s",
-          jitterYellow: "Jitter (IQR) {0} ms ≥ {1} ms",
-          lossYellow: "Loss {0}% ≥ {1}%",
-        },
-        localReasons: {
-          warmup: "Warming up",
-          disconnected: "Disconnected",
-          consecutiveTimeouts: "3 consecutive probe timeouts",
-          burstTimeoutRate: "Burst timeout rate above 5%",
-          jitter: "High timing variation",
-          rtt: "Slow responses",
-          timeout: "Recent probe timeouts",
-          green: "Local network good",
-          outsideSafe: "Outside safe thresholds",
-        },
-        events: {
-          connected: "Connected",
-          disconnected: "Disconnected",
-          reconnected: "Reconnected",
-          stopped: "Stopped",
-          "connect failed": "Connect failed",
-          left: "client {0} left",
-          removed: "client {0} removed",
-        },
-        eventDetails: {
-          noHubConfigured: "no hub configured",
-        },
-        monitor: {
-          sites: "Sites online",
-          networkTitle: "Network topology",
-          readingsTitle: "Site readings",
-          readingsNote: "Hub latency and link quality are assessed separately",
-          localNote: "Local Wi-Fi measurement",
-          join: "Join devices",
-          footerHint: "Keep device pages open. Measurement runs automatically.",
-          offline: "Offline",
-          statusWord: {
-            idle: "Idle",
-            gray: "Warming up",
-            green: "Ready",
-            yellow: "Caution",
-            red: "Risk",
-          },
-          sub: "Monitor — flower view",
-          overallLabel: "Overall",
-          formTitle: "Hub connection",
-          formUrl: "Hub URL",
-          formToken: "Token",
-          formRoom: "Room",
-          formNode: "Node name",
-          formNodePlaceholder: "site name",
-          connect: "Connect",
-          connecting: "Connecting…",
-          connected: "Connected",
-          reconnect: "Reconnect",
-          formHint:
-            "Review your hub settings, then connect. In the App, changes apply to this session.",
-          starHint:
-            "Spokes = hub legs (RTT p50 labeled, color = quality); outer rings = local legs (gray = no data)",
-          starNotConnected:
-            "Not connected to the hub — the network star view appears once connected",
-          selfBadge: "This site",
-          localTitle: "Local leg — this site's performers",
-          countOnline: "· {0} online",
-          emptyLocal:
-            "No performers yet — expand Join devices below and scan; measurement starts automatically",
-          logTitle: "Hub-leg events",
-          noEvents: "No events yet",
-          scan: "Scan to open the performer page",
-          remove: "Remove",
-          selfTag: "This site",
-          performer: "Performer {0}",
-          ownFallback: "This node",
-          rttP50: "RTT p50 typical",
-          rttP95: "RTT p95 tail",
-          oneWay: "One-way ≈ RTT/2",
-          jitterIqr: "Jitter (IQR)",
-          jitterP95: "Jitter p95",
-          loss: "Loss",
-          performers: "Performers",
-          localLeg: "Local leg",
-          noData: "n/a",
-          sitePair: "Site pair",
-          perfPair: "Performer pair",
-          segLocal: "local",
-          segHub: "hub",
-          waitSite: "waiting for both legs",
-          waitPerf: "waiting for local legs",
-          peerUnreachable: "peer unreachable",
-          attribHubRed: "Problem: {node} hub leg",
-          attribHubYellow: "Borderline: {node} hub leg",
-          attribLocalRed: "Problem: {node} local leg",
-          attribLocalYellow: "Borderline: {node} local leg",
-          attribSelfHubRed: "Problem: this site's hub leg",
-          attribSelfHubYellow: "Borderline: this site's hub leg",
-          attribSelfLocalRed: "Problem: this site's local leg",
-          attribSelfLocalYellow: "Borderline: this site's local leg",
-        },
-        ago: { just: "just now", seconds: "s ago", minutes: "m ago" },
+      "p50": "RTT p50",
+      "p95": "RTT p95",
+      "iqr": "抖动 IQR",
+      "lossRate": "丢包率",
+      "reconnects": "重连 / 最近 15 秒",
+      "reconnectCount": "{0} 次",
+      "dataSource": "数据来源",
+      "ownMeasurement": "本站测量",
+      "reported": "节点自报 · {0}",
+      "location": "位置",
+      "ip": "公网 IP",
+      "ipSource": "IP 估计",
+      "manualSource": "手动校正",
+      "configuredSource": "服务器配置",
+      "lastLocation": "上次位置",
+      "editLocation": "校正本站位置",
+      "locationNote": "仅本次诊断有效。IP 定位通常只能估计城市，无法保证区县精度。",
+      "locationLabel": "地点名称",
+      "latitude": "纬度",
+      "longitude": "经度",
+      "saveLocation": "应用校正",
+      "resetLocation": "恢复 IP 估计",
+      "locationInvalid": "填写有效纬度（−90～90）、经度（−180～180）。",
+      "locationSaving": "正在应用…",
+      "locationSaved": "已应用本次诊断的位置校正。",
+      "locationReset": "已恢复 IP 估计。",
+      "locationFailed": "位置未能更新，请稍后重试。",
+      "appConfig": "节点配置由 PNDS App 提供；此处修改仅用于当前诊断。",
+      "formTitle": "连接设置",
+      "formUrl": "Hub URL",
+      "formToken": "Token",
+      "formRoom": "Room",
+      "formNode": "节点名",
+      "connect": "连接",
+      "connected": "已连接",
+      "connectingButton": "连接中…",
+      "events": "事件记录",
+      "noEvents": "暂无事件",
+      "details": "节点详情"
+    },
+    "overall": {
+      "idle": "未连接 — 请先配置 hub",
+      "gray": "测量中",
+      "green": "公网链路稳定",
+      "yellow": "公网链路需注意",
+      "red": "公网链路异常"
+    },
+    "hubReasons": {
+      "unreachable": "hub 不可达",
+      "warmup": "预热中",
+      "invalidToken": "token 无效——去 App「节点」栏核对 hub token",
+      "nodeNameTaken": "节点名被占用——去 App 改节点名",
+      "transport": "传输故障——hub 宕机或网络不通",
+      "reconnectsRed": "最近 {1} 秒内重连 {0} 次",
+      "jitterRed": "抖动（IQR）{0} ms ≥ {1} ms",
+      "lossRed": "丢包率 {0}% ≥ {1}%",
+      "linkGood": "链路质量良好",
+      "reconnectYellow": "最近 {0} 秒内 1 次重连",
+      "jitterYellow": "抖动（IQR）{0} ms ≥ {1} ms",
+      "lossYellow": "丢包率 {0}% ≥ {1}%"
+    },
+    "events": {
+      "connected": "已连接",
+      "disconnected": "已断开",
+      "reconnected": "已重连",
+      "stopped": "已停止",
+      "connect failed": "连接失败"
+    },
+    "eventDetails": {
+      "noHubConfigured": "未配置 hub"
+    },
+    "ago": {
+      "just": "刚刚",
+      "seconds": " 秒前",
+      "minutes": " 分钟前"
+    }
+  },
+  "en": {
+    "internet": {
+      "sub": "Internet connection diagnostics",
+      "authFailed": "Node authentication failed",
+      "observationLost": "Diagnostic data disconnected · waiting to recover",
+      "observationRecover": "Live node status is unconfirmed until diagnostic data resumes.",
+      "shortReconnects": "{0} reconnects",
+      "sites": "Nodes online",
+      "hub": "HUB relay",
+      "hubUnknown": "Relay location unknown",
+      "connection": "Connection information",
+      "node": "Node",
+      "status": "Status",
+      "rtt": "RTT ms",
+      "jitter": "Jitter ms",
+      "loss": "Loss %",
+      "readings": "Node ↔ HUB",
+      "window": "Last 15 seconds",
+      "fineprint": "RTT is the typical round-trip time; jitter is IQR. Stability depends on jitter, loss and reconnects.",
+      "geography": "Geography",
+      "topology": "Topology",
+      "viewLabel": "Connection view",
+      "mapTitle": "Node connections · automatic extent",
+      "topologyTitle": "Node connections · topology",
+      "mapDescription": "Fits known node and relay locations. Dot colors identify nodes; the square marks the relay.",
+      "topologyDescription": "Internet topology with the relay centered and nodes evenly arranged.",
+      "legend": "Colors identify nodes · square marks relay",
+      "hover": "Hover a node for details below",
+      "self": "This node",
+      "unknownLocation": "Location unknown",
+      "emptyMap": "No locations available",
+      "emptyHint": "Unknown-location nodes are listed below. Topology remains available.",
+      "mapPartial": "Some locations unknown · see list below",
+      "approxScale": "≈ {0} km",
+      "online": "{0} / {1} nodes online",
+      "known": "{0} known nodes",
+      "stableReason": "Node-to-HUB links are stable",
+      "sampling": "Some nodes are still sampling",
+      "samplingReason": "Collecting link samples",
+      "connecting": "Connecting to HUB",
+      "connectingReason": "Sampling starts after connection",
+      "disconnected": "This node lost its HUB connection",
+      "unknownRemote": "Unconfirmed",
+      "unknownReason": "This node lost its HUB connection. Remote status cannot be confirmed.",
+      "stale": "Updates stopped",
+      "staleAge": "No update for {0}s",
+      "staleReason": "No updates from this node. The last location is retained; historical readings are hidden.",
+      "unconfigured": "Configure the HUB first",
+      "unconfiguredReason": "Enter the HUB address, token and node name in Connection information.",
+      "reconnect": "Reconnect",
+      "quality": {
+        "idle": "Not connected",
+        "gray": "Sampling",
+        "green": "Stable",
+        "yellow": "Attention",
+        "red": "Issue"
       },
+      "p50": "RTT p50",
+      "p95": "RTT p95",
+      "iqr": "Jitter IQR",
+      "lossRate": "Packet loss",
+      "reconnects": "Reconnects / last 15s",
+      "reconnectCount": "{0}",
+      "dataSource": "Data source",
+      "ownMeasurement": "Measured here",
+      "reported": "Node report · {0}",
+      "location": "Location",
+      "ip": "Public IP",
+      "ipSource": "IP estimate",
+      "manualSource": "Manual correction",
+      "configuredSource": "Server configuration",
+      "lastLocation": "Last location",
+      "editLocation": "Correct this node’s location",
+      "locationNote": "Applies to this diagnostic session only. IP geolocation usually estimates a city; district accuracy is not guaranteed.",
+      "locationLabel": "Place name",
+      "latitude": "Latitude",
+      "longitude": "Longitude",
+      "saveLocation": "Apply correction",
+      "resetLocation": "Restore IP estimate",
+      "locationInvalid": "Enter valid latitude (−90…90) and longitude (−180…180).",
+      "locationSaving": "Applying…",
+      "locationSaved": "Location corrected for this diagnostic session.",
+      "locationReset": "IP estimate restored.",
+      "locationFailed": "Could not update the location. Try again.",
+      "appConfig": "PNDS App provides the node configuration. Changes here apply to this diagnostic session only.",
+      "formTitle": "Connection settings",
+      "formUrl": "Hub URL",
+      "formToken": "Token",
+      "formRoom": "Room",
+      "formNode": "Node name",
+      "connect": "Connect",
+      "connected": "Connected",
+      "connectingButton": "Connecting…",
+      "events": "Event history",
+      "noEvents": "No events yet",
+      "details": "Node details"
     },
-
-    // Performer roster cap (id space, PlayerRegistry) and the
-    // per-performer event vocabulary (lib/local-leg.js producer,
-    // monitor page consumer). `left` and `removed` are site-level: the
-    // two deletion paths (#10 the performer's own 退出检测, #13 the
-    // monitor's「x」) both delete the card, so the event lives on in the
-    // session's site-wide log instead — the type says who deleted.
-    maxClients: 16,
-    localEvents: {
-      connected: "connected",
-      disconnected: "disconnected",
-      reconnected: "reconnected",
-      left: "left",
-      removed: "removed",
+    "overall": {
+      "idle": "Not connected — configure the hub",
+      "gray": "Measuring…",
+      "green": "Internet links stable",
+      "yellow": "Internet links need attention",
+      "red": "Internet link issue"
     },
-
-    // Derived end-to-end numbers (parent #1): the star topology has no
-    // direct site-to-site link, so these are SUMS of measured segments —
-    // never a third measurement layer. Null while any segment is
-    // unmeasured (the formula must never sum a guess).
-    derivedSitePair: function (ownP50, peerP50) {
-      if (typeof ownP50 !== "number" || typeof peerP50 !== "number") {
-        return null;
-      }
-      return Math.round((ownP50 + peerP50) * 10) / 10;
+    "hubReasons": {
+      "unreachable": "Hub unreachable",
+      "warmup": "Warming up",
+      "invalidToken": "Invalid hub token — fix the token in the App's node settings",
+      "nodeNameTaken": "Node name taken — change the node name in the App",
+      "transport": "Transport failure — hub down or network unreachable",
+      "reconnectsRed": "{0} reconnects in the last {1}s",
+      "jitterRed": "Jitter (IQR) {0} ms ≥ {1} ms",
+      "lossRed": "Loss {0}% ≥ {1}%",
+      "linkGood": "Link quality good",
+      "reconnectYellow": "1 reconnect in the last {0}s",
+      "jitterYellow": "Jitter (IQR) {0} ms ≥ {1} ms",
+      "lossYellow": "Loss {0}% ≥ {1}%"
     },
-
-    // Performer pair = local + hub + hub + local (four segments, #5
-    // reports the local ones).
-    derivedPerformerPair: function (
-      ownLocalP50,
-      ownHubP50,
-      peerHubP50,
-      peerLocalP50,
-    ) {
-      var segments = [ownLocalP50, ownHubP50, peerHubP50, peerLocalP50];
-      for (var i = 0; i < segments.length; i++) {
-        if (typeof segments[i] !== "number") {
-          return null;
-        }
-      }
-      var total = 0;
-      for (var j = 0; j < segments.length; j++) {
-        total += segments[j];
-      }
-      return Math.round(total * 10) / 10;
+    "events": {
+      "connected": "Connected",
+      "disconnected": "Disconnected",
+      "reconnected": "Reconnected",
+      "stopped": "Stopped",
+      "connect failed": "Connect failed"
     },
-
-    // Status → CSS class helpers, shared by both pages (the st-*
-    // classes set the --st color variable in style.css). Written
-    // this-free so a destructured `const setStatus = P.setStatus` keeps
-    // working. In Node these exist unused — shared.js is the
-    // browser/server seam, not a browser-only file.
-    STATUS_CLASSES: ["st-idle", "st-gray", "st-green", "st-yellow", "st-red"],
-
-    statusClass: function (status) {
-      return "st-" + (status || "idle");
+    "eventDetails": {
+      "noHubConfigured": "no hub configured"
     },
-
-    setStatus: function (element, status) {
-      var classes = ["st-idle", "st-gray", "st-green", "st-yellow", "st-red"];
-      for (var i = 0; i < classes.length; i++) {
-        element.classList.remove(classes[i]);
-      }
-      element.classList.add("st-" + (status || "idle"));
-    },
-
-    // localStorage keys: the monitor's connection form (issue #3: the
-    // form persists, reopening the monitor must not re-fill it) and the
-    // performer page's claim token (a reconnect recovers the client
-    // id).
-    storageKeys: {
-      hubConfig: "tnd-hub-config",
-      performerToken: "tnd-performer-token",
-    },
-
-    events: {
-      // Performer page ↔ score server (issue #5, the local leg):
-      //   join:     page → server { token } — allocate or recover an id
-      //   joined:   server → page { id, token, recovered }
-      //   rejected: server → page { reason }
-      //   probe:    server → page { seq } — answer immediately
-      //   ack:      page → server { seq, t0, t1 } (RTT measured server-side)
-      //   leave:    page → server — voluntary exit (issue #10): the
-      //             server deletes the client outright; the page closes
-      //             the socket and shows its "left" cover
-      //   removed:  server → page — the monitor deleted this client
-      //             (issue #13): same exit state as `leave`, worded
-      //             "removed by the monitor"
-      join: "join",
-      joined: "joined",
-      rejected: "rejected",
-      probe: "local:probe",
-      ack: "local:ack",
-      leave: "leave",
-      removed: "removed",
-      // Monitor page ↔ score server:
-      //   config: submit the connection form { url, token, room, nodeId }
-      //   state:  the full site snapshot — hub leg + peers + local
-      //           legs + overall (token never echoed back)
-      //   remove: page → server { id } — delete that performer (issue
-      //           #13): every card carries an「x」, online or not; the
-      //           server runs the same deletion as `leave` and, for an
-      //           online client, first notifies the phone via `removed`
-      hubConfig: "hub:config",
-      state: "state",
-      remove: "remove",
+    "ago": {
+      "just": "just now",
+      "seconds": "s ago",
+      "minutes": "m ago"
+    }
+  }
+},
+    setStatus(element, status) {
+      element.classList.remove("st-idle", "st-gray", "st-green", "st-yellow", "st-red");
+      element.classList.add("st-" + (["idle", "gray", "green", "yellow", "red"].includes(status) ? status : "gray"));
     },
   };
 });
-
-// Node: read ports from manifest.json (the single source of truth).
-function readManifestPorts() {
-  var fs = require("node:fs");
-  var path = require("node:path");
-  // shared.js lives in public/; the manifest is one directory up.
-  var manifestPath = path.join(__dirname, "..", "manifest.json");
-  var manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
-  return {
-    performerPort: manifest.scoreServer.performerPort,
-    monitorPort: manifest.scoreServer.monitorPort,
-  };
-}

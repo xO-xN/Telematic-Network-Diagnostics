@@ -1,183 +1,53 @@
-// Flower-view pure functions (issue #4, local axis added in #5): the
-// overall verdict (worst LEG wins across hub and local, no weighting)
-// with fault attribution naming the site AND the leg, and the derived
-// end-to-end numbers (star topology has no direct link — the numbers
-// are sums of measured segments, never a third measurement).
-
 const assert = require("node:assert/strict");
 const test = require("node:test");
+const { overallFromNodes } = require("../lib/flower");
 
-const { STATUS, overallFromNodes } = require("../lib/flower");
-// The derived end-to-end sums live in the browser/server seam — the
-// monitor page and these tests share the one implementation.
-const { derivedSitePair, derivedPerformerPair } = require("../public/shared");
-
-// ------------------------------------------------------------
-// overallFromNodes — table-driven
-// ------------------------------------------------------------
-
-const OVERALL_TABLE = [
-  {
-    name: "empty roster → gray, no attribution",
-    nodes: [],
-    status: STATUS.GRAY,
-    attributionNodeId: null,
-    attributionLeg: null,
-  },
-  {
-    name: "single green node, no local data → green, hub attribution",
-    nodes: [{ nodeId: "a", hubStatus: "green", localStatus: null, isSelf: true }],
-    status: STATUS.GREEN,
-    attributionNodeId: "a",
-    attributionLeg: "hub",
-    attributionSelf: true,
-  },
-  {
-    name: "worst hub wins: green + yellow + green → yellow, attributed to the yellow one",
-    nodes: [
-      { nodeId: "a", hubStatus: "green", localStatus: "green", isSelf: true },
-      { nodeId: "b", hubStatus: "yellow", localStatus: "green", isSelf: false },
-      { nodeId: "c", hubStatus: "green", localStatus: "green", isSelf: false },
-    ],
-    status: STATUS.YELLOW,
-    attributionNodeId: "b",
-    attributionLeg: "hub",
-    attributionSelf: false,
-  },
-  {
-    name: "any red hub → red, attributed to that node's hub leg (not self)",
-    nodes: [
-      { nodeId: "a", hubStatus: "green", localStatus: "green", isSelf: true },
-      { nodeId: "b", hubStatus: "green", localStatus: "green", isSelf: false },
-      { nodeId: "c", hubStatus: "red", localStatus: "green", isSelf: false },
-    ],
-    status: STATUS.RED,
-    attributionNodeId: "c",
-    attributionLeg: "hub",
-    attributionSelf: false,
-  },
-  {
-    name: "own red hub leg → red, attributed to self's public leg",
-    nodes: [
-      { nodeId: "a", hubStatus: "red", localStatus: "green", isSelf: true },
-      { nodeId: "b", hubStatus: "green", localStatus: "green", isSelf: false },
-    ],
-    status: STATUS.RED,
-    attributionNodeId: "a",
-    attributionLeg: "hub",
-    attributionSelf: true,
-  },
-  {
-    name: "a peer's red LOCAL leg drives the verdict (the #5 demo: “问题在 B 站本地腿”)",
-    nodes: [
-      { nodeId: "a", hubStatus: "green", localStatus: "green", isSelf: true },
-      { nodeId: "b", hubStatus: "green", localStatus: "red", isSelf: false },
-    ],
-    status: STATUS.RED,
-    attributionNodeId: "b",
-    attributionLeg: "local",
-    attributionSelf: false,
-  },
-  {
-    name: "own red local leg → red, attributed to self's local leg",
-    nodes: [
-      { nodeId: "a", hubStatus: "green", localStatus: "red", isSelf: true },
-      { nodeId: "b", hubStatus: "green", localStatus: "green", isSelf: false },
-    ],
-    status: STATUS.RED,
-    attributionNodeId: "a",
-    attributionLeg: "local",
-    attributionSelf: true,
-  },
-  {
-    name: "yellow local leg beats green hubs → yellow, local attribution",
-    nodes: [
-      { nodeId: "a", hubStatus: "green", localStatus: "green", isSelf: true },
-      { nodeId: "b", hubStatus: "green", localStatus: "yellow", isSelf: false },
-    ],
-    status: STATUS.YELLOW,
-    attributionNodeId: "b",
-    attributionLeg: "local",
-    attributionSelf: false,
-  },
-  {
-    name: "warming-up (gray) peers don't fail an otherwise green network",
-    nodes: [
-      { nodeId: "a", hubStatus: "green", localStatus: "green", isSelf: true },
-      { nodeId: "b", hubStatus: "gray", localStatus: "gray", isSelf: false },
-    ],
-    status: STATUS.GREEN,
-  },
-  {
-    name: "a gray self with no peers → gray (no verdict yet)",
-    nodes: [{ nodeId: "a", hubStatus: "gray", localStatus: null, isSelf: true }],
-    status: STATUS.GRAY,
-  },
-  {
-    name: "green hubs with a gray local (performers warming up) stay green",
-    nodes: [
-      { nodeId: "a", hubStatus: "green", localStatus: "gray", isSelf: true },
-      { nodeId: "b", hubStatus: "green", localStatus: null, isSelf: false },
-    ],
-    status: STATUS.GREEN,
-  },
-];
-
-for (const row of OVERALL_TABLE) {
-  test(`overallFromNodes: ${row.name}`, () => {
-    const result = overallFromNodes(row.nodes);
-
-    assert.equal(result.status, row.status);
-
-    if ("attributionNodeId" in row) {
-      assert.equal(result.attributionNodeId, row.attributionNodeId);
-    }
-
-    if ("attributionLeg" in row) {
-      assert.equal(result.attributionLeg, row.attributionLeg);
-    }
-
-    if ("attributionSelf" in row) {
-      assert.equal(result.attributionSelf, row.attributionSelf);
-    }
+test("internet verdict: empty or invalid readings remain pending", () => {
+  assert.deepEqual(overallFromNodes([]), {
+    status: "gray", attributionNodeId: null, attributionLeg: null, attributionSelf: false,
   });
-}
+  assert.equal(overallFromNodes([{hubStatus:"not-a-status"}]).status, "gray");
+});
 
-test("overallFromNodes: the FIRST worst node wins ties (stable attribution)", () => {
+test("internet verdict ignores obsolete local failures from old nodes", () => {
   const result = overallFromNodes([
-    { nodeId: "a", hubStatus: "red", localStatus: "green", isSelf: false },
-    { nodeId: "b", hubStatus: "green", localStatus: "red", isSelf: false },
+    {nodeId:"self", hubStatus:"green", localStatus:"red", isSelf:true},
+    {nodeId:"remote", hubStatus:"green", localStatus:"red"},
   ]);
-
-  assert.equal(result.attributionNodeId, "a");
-  assert.equal(result.attributionLeg, "hub");
+  assert.equal(result.status,"green");
+  assert.equal(result.attributionLeg,"hub");
+  assert.equal(result.attributionSelf,true);
 });
 
-test("overallFromNodes: same node, both legs worst → hub named (checked first)", () => {
+test("internet verdict attributes the worst public link and keeps first ties stable", () => {
+  const nodes = [
+    {nodeId:"self",hubStatus:"green",isSelf:true},
+    {nodeId:"warn",hubStatus:"yellow"},
+    {nodeId:"bad",hubStatus:"red"},
+    {nodeId:"also-bad",hubStatus:"red"},
+  ];
+  assert.deepEqual(overallFromNodes(nodes),{
+    status:"red",attributionNodeId:"bad",attributionLeg:"hub",attributionSelf:false,
+  });
+  assert.equal(overallFromNodes(nodes.slice(0,2)).status,"yellow");
+});
+
+test("own outage is attributed to self while remote readings are unconfirmed", () => {
   const result = overallFromNodes([
-    { nodeId: "a", hubStatus: "red", localStatus: "red", isSelf: false },
+    {nodeId:"self",hubStatus:"red",isSelf:true},
+    {nodeId:"remote",hubStatus:"gray"},
   ]);
-
-  assert.equal(result.attributionNodeId, "a");
-  assert.equal(result.attributionLeg, "hub");
+  assert.equal(result.attributionNodeId,"self");
+  assert.equal(result.attributionSelf,true);
 });
 
-// ------------------------------------------------------------
-// Derived end-to-end numbers
-// ------------------------------------------------------------
-
-test("derivedSitePair: two hub-leg p50s sum; unmeasured segments stay null", () => {
-  assert.equal(derivedSitePair(41, 41), 82);
-  assert.equal(derivedSitePair(12.34, 5.66), 18);
-  assert.equal(derivedSitePair(null, 41), null);
-  assert.equal(derivedSitePair(41, null), null);
-  assert.equal(derivedSitePair(undefined, undefined), null);
-});
-
-test("derivedPerformerPair: four segments sum; any missing segment → null", () => {
-  // 本地 + hub + hub + 本地 (parent #1: performer 对 = 四段之和)
-  assert.equal(derivedPerformerPair(3, 41, 41, 5), 90);
-  assert.equal(derivedPerformerPair(null, 41, 41, 5), null, "own local unmeasured");
-  assert.equal(derivedPerformerPair(3, 41, 41, null), null, "peer local unmeasured");
-  assert.equal(derivedPerformerPair(3, null, 41, 5), null);
+test("unfinished remote sampling keeps a stable room pending, while negative evidence still wins", () => {
+  const nodes = [
+    {nodeId:"self",hubStatus:"green",isSelf:true},
+    {nodeId:"sampling",hubStatus:"gray"},
+  ];
+  assert.equal(overallFromNodes(nodes).status,"gray");
+  assert.equal(overallFromNodes(nodes).attributionNodeId,"sampling");
+  assert.equal(overallFromNodes([...nodes,{nodeId:"warning",hubStatus:"yellow"}]).status,"yellow");
+  assert.equal(overallFromNodes([...nodes,{nodeId:"failed",hubStatus:"red"}]).status,"red");
 });

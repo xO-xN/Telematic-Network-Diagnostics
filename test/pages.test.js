@@ -1,1583 +1,176 @@
-// Page runtime tests: public/monitor.js and public/performer.js
-// executed for real (vm + a minimal id-addressed DOM stub) — catches
-// wiring bugs a syntax check cannot, like a once-guard consuming the
-// env prefill before the first state broadcast arrives.
-
+// Real DOM runtime tests. jsdom is a development-only dependency and is not
+// included in the utility runtime bundle.
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
-const vm = require("node:vm");
-
-const PUBLIC_DIR = path.join(__dirname, "..", "public");
-const ROOT_DIR = path.join(__dirname, "..");
-
-// A DOM node stub: id-addressed (pages build markup via innerHTML
-// strings and then getElementById — the stub mirrors that contract,
-// not a tree).
-function makeNode(tag, document) {
-  const node = {
-    tagName: tag,
-    parentNode: null,
-    children: [],
-    attributes: {},
-    listeners: {},
-    classList: {
-      set: new Set(),
-      add(...names) {
-        for (const name of names) {
-          node.classList.set.add(name);
-        }
-      },
-      remove(...names) {
-        for (const name of names) {
-          node.classList.set.delete(name);
-        }
-      },
-      contains(name) {
-        return node.classList.set.has(name);
-      },
-      toggle(name, force) {
-        const on =
-          force === undefined ? !node.classList.set.has(name) : Boolean(force);
-
-        if (on) {
-          node.classList.set.add(name);
-        } else {
-          node.classList.set.delete(name);
-        }
-        return on;
-      },
-    },
-    style: { setProperty() {} },
-    setAttribute(name, value) {
-      node.attributes[name] = String(value);
-    },
-    append(...kids) {
-      for (const kid of kids.filter(Boolean)) {
-        if (kid.remove) kid.remove();
-        kid.parentNode = node;
-        node.children.push(kid);
-      }
-    },
-    insertBefore(kid, before) {
-      kid.remove();
-      const index = before
-        ? node.children.indexOf(before)
-        : node.children.length;
-      node.children.splice(index, 0, kid);
-      kid.parentNode = node;
-    },
-    remove() {
-      if (node.parentNode) {
-        const siblings = node.parentNode.children;
-        siblings.splice(siblings.indexOf(node), 1);
-        node.parentNode = null;
-      }
-    },
-    contains(target) {
-      return (
-        node === target || node.children.some((kid) => kid.contains?.(target))
-      );
-    },
-    focus() {
-      document.activeElement = node;
-    },
-    addEventListener(type, handler) {
-      (node.listeners[type] = node.listeners[type] || []).push(handler);
-    },
-  };
-
-  Object.defineProperty(node, "textContent", {
-    get() {
-      return node.children.map((kid) => kid.text || "").join("");
-    },
-    set(text) {
-      const value = String(text);
-      node.children.forEach((kid) => {
-        kid.parentNode = null;
-      });
-      node.children = value === "" ? [] : [{ text: value, parentNode: node }];
-    },
-  });
-
-  // Assigning className replaces the class set (as in the real DOM).
-  Object.defineProperty(node, "className", {
-    get() {
-      return [...node.classList.set].join(" ");
-    },
-    set(value) {
-      node.classList.set = new Set(String(value).split(/\s+/).filter(Boolean));
-    },
-  });
-
-  return node;
-}
-
-// Fires every listener a stubbed node registered for an event type —
-// the page code's own click handlers, invoked directly.
-function click(node) {
-  for (const handler of node.listeners.click || []) {
-    handler();
-  }
-}
-
-// Loads shared.js (+ optionally the locale bridge, the way the monitor
-// page does) and the page script into a fresh sandbox. Returns the
-// sandbox plus the captured socket (listeners + emitted events).
-function loadPage(file, { localeSearch } = {}) {
-  const ids = new Map();
-  const document = {
-    createElement: (tag) => makeNode(tag, document),
-    createElementNS: (ns, tag) => makeNode(tag, document),
-    createTextNode: (text) => ({ text: String(text) }),
-    getElementById: (id) => {
-      if (!ids.has(id)) {
-        ids.set(id, makeNode("div", document));
-      }
-      return ids.get(id);
-    },
-    activeElement: null,
-    documentElement: makeNode("html"),
-  };
-
+const ROOT = path.join(__dirname, "..");
+const { JSDOM } = require("jsdom");
+const read = file => fs.readFileSync(path.join(ROOT, file), "utf8");
+const { events } = require("../public/shared");
+function fixture(t, search = "") {
+  const errors = [], emitted = [], listeners = new Map(), timers = new Map(); let sequence = 0;
+  const dom = new JSDOM('<main id="app"></main>', { url: "http://127.0.0.1:6869/" + search, runScripts: "outside-only" });
+  const w = dom.window, d = w.document;
+  w.ResizeObserver = class { observe() {} };
+  Object.defineProperty(w.HTMLElement.prototype, "clientWidth", { get() { return this.id === "map-stage" ? 680 : 0; } });
+  Object.defineProperty(w.HTMLElement.prototype, "clientHeight", { get() { return this.id === "map-stage" ? 340 : 0; } });
+  w.setTimeout = (fn, delay) => { const id = ++sequence; timers.set(id, { fn, delay }); return id; };
+  w.clearTimeout = id => timers.delete(id);
   const socket = {
-    listeners: {},
-    emitted: [],
-    opens: 0,
-    closes: 0,
-    on(event, handler) {
-      (this.listeners[event] = this.listeners[event] || []).push(handler);
-    },
-    emit(event, payload) {
-      this.emitted.push([event, payload]);
-    },
-    open() {
-      this.opens += 1;
-    },
-    close() {
-      this.closes += 1;
+    connected: true, ackTimeout: null,
+    on(name, handler) { if (!listeners.has(name)) listeners.set(name, []); listeners.get(name).push(handler); },
+    timeout(delay) { this.ackTimeout = delay; return this; },
+    emit(...args) {
+      const callback = args.at(-1);
+      if (this.ackTimeout !== null && typeof callback === "function") args[args.length - 1] = result => callback(null, result);
+      this.ackTimeout = null; emitted.push(args); return this;
     },
   };
-
-  const sandbox = {
-    console,
-    document,
-    location: { hostname: "127.0.0.1", port: "6869", search: "" },
-    performance: { now: () => 0 },
-    io: () => socket,
-    setTimeout,
-    clearTimeout,
-  };
-  const messageListeners = [];
-
-  sandbox.addEventListener = (type, handler) => {
-    if (type === "message") {
-      messageListeners.push(handler);
-    }
-  };
-
-  sandbox.storage = new Map();
-  sandbox.localStorage = {
-    getItem: (key) =>
-      sandbox.storage.has(key) ? sandbox.storage.get(key) : null,
-    setItem: (key, value) => sandbox.storage.set(key, String(value)),
-  };
-  sandbox.self = sandbox;
-  sandbox.window = sandbox;
-  sandbox.__PNDS_PORTS__ = { performerPort: 6868, monitorPort: 6869 };
-
-  const context = vm.createContext(sandbox);
-
-  vm.runInContext(
-    fs.readFileSync(path.join(PUBLIC_DIR, "shared.js"), "utf8"),
-    context,
-  );
-  // The monitor page always loads the locale bridge before its script
-  // (see public/index.html); the performer page never does.
-  if (file === "monitor.js") {
-    sandbox.location.search = localeSearch;
-    vm.runInContext(
-      fs.readFileSync(path.join(ROOT_DIR, "lib", "locale-follow.js"), "utf8"),
-      context,
-    );
-  }
-  vm.runInContext(
-    fs.readFileSync(path.join(PUBLIC_DIR, file), "utf8"),
-    context,
-  );
-
-  return { sandbox, socket, document, messageListeners };
+  w.io = () => socket;
+  w.__PNDS_PORTS__ = { performerPort: 6868, monitorPort: 6869 };
+  w.addEventListener("error", event => errors.push(event.message));
+  w.document.write = () => {};
+  for (const file of ["public/shared.js", "public/geography.js", "public/land.js"]) w.eval(read(file));
+  for (const script of read("public/index.html").matchAll(/<script>([\s\S]*?)<\/script>/g)) w.eval(script[1]);
+  for (const file of ["lib/theme-follow.js", "lib/locale-follow.js", "public/monitor.js"]) w.eval(read(file));
+  const get = id => d.getElementById(id);
+  const deliver = (name, value) => { if (name === "disconnect") socket.connected = false; else if (name === "connect") socket.connected = true; for (const handler of listeners.get(name) || []) handler(value); };
+  t.after(() => { assert.deepEqual(errors, []); dom.window.close(); });
+  return { w, d, get, emitted, deliver, timers, socket, state(value) { deliver(events.state, structuredClone(value)); }, hover(id) { const mark = [...d.querySelectorAll(".map-mark")].find(node => node.dataset.node === id); get("map-stage").dispatchEvent(new w.MouseEvent("pointermove", { clientX: parseFloat(mark.style.left), clientY: parseFloat(mark.style.top), bubbles: true })); }, leave() { get("map-stage").dispatchEvent(new w.MouseEvent("pointerleave")); }, active() { return d.querySelector('tr[data-active="true"]')?.dataset.row; } };
 }
-
-function deliver(socket, sandbox, event, payload) {
-  for (const handler of socket.listeners[event] || []) {
-    handler(
-      payload === undefined ? undefined : JSON.parse(JSON.stringify(payload)),
-    );
-  }
+const place = (label, latitude, longitude, source = "ip") => ({ label, latitude, longitude, source });
+function sample() {
+  const summary = { rttP50: 12, rttP95: 16, iqrMs: 1.2, lossRate: 0, reconnects: 0, samples: 60 };
+  return { configured: true, activeConfig: { url: "https://hub.example", token: "example-token", room: "work_1", nodeId: "北京西城" }, env: {}, overall: { status: "green" }, leg: { connected: true, everConnected: true, status: "green", reason: "linkGood", summary, network: { ip: "192.0.2.1", location: place("北京西城", 39.91, 116.37), hubLocation: place("南京", 32.04, 118.77, "configured"), manualLocationSupported: true }, events: [], peers: { "北京大兴": { connected: true, status: "green", reason: "linkGood", summary: { ...summary, rttP50: 15 }, agoMs: 1000, network: { ip: "192.0.2.2", location: place("北京大兴", 39.73, 116.34) } }, "武汉": { connected: true, status: "green", reason: "linkGood", summary: { ...summary, rttP50: 32 }, network: { location: place("武汉", 30.6, 114.3) } }, "内蒙古": { connected: true, status: "green", reason: "linkGood", summary, network: { location: place("呼和浩特", 40.84, 111.75) } } } } };
 }
+const button = (p, id, selector = ".node-name") => [...p.d.querySelectorAll(selector)].find(node => node.dataset.node === id);
+const submit = (p, id) => p.get(id).dispatchEvent(new p.w.Event("submit", { bubbles: true, cancelable: true }));
+const input = (p, id, value) => { p.get(id).value = value; p.get(id).dispatchEvent(new p.w.Event("input", { bubbles: true })); };
+const positions = p => [...p.d.querySelectorAll(".map-mark")].map(node => [node.dataset.node, node.style.left, node.style.top]);
 
-// A representative connected state: own green leg, one yellow peer
-// with a RED local leg, one local performer (the full flower picture).
-function sampleState() {
-  return {
-    configured: true,
-    activeConfig: {
-      url: "http://hub",
-      token: "hub-token",
-      room: "default",
-      nodeId: "site-a",
-    },
-    env: { hubUrl: "", hubToken: "", hubRoom: "", nodeId: "" },
-    leg: {
-      connected: true,
-      everConnected: true,
-      probing: "calm",
-      status: "green",
-      reason: "linkGood",
-      reasonParams: [],
-      local: { status: "green", p50: 1, performers: 1 },
-      summary: {
-        samples: 20,
-        lost: 0,
-        reconnects: 0,
-        rttP50: 12.5,
-        rttP95: 20,
-        iqrMs: 1,
-        lossRate: 0,
-        oneWayEstimateMs: 6.3,
-      },
-      peers: {
-        "site-b": {
-          connected: true,
-          probing: "burst",
-          status: "yellow",
-          reason: "jitterYellow",
-          reasonParams: ["12.0", "10"],
-          summary: {
-            samples: 18,
-            lost: 0,
-            reconnects: 0,
-            rttP50: 40,
-            rttP95: 60,
-            iqrMs: 12,
-            lossRate: 0,
-            oneWayEstimateMs: 20,
-          },
-          local: { status: "red", p50: 8, performers: 2 },
-          agoMs: 300,
-        },
-      },
-      events: [{ type: "connected", detail: null, at: 1, agoMs: 5000 }],
-    },
-    local: {
-      probing: "burst",
-      status: "green",
-      p50: 1,
-      performers: 1,
-      clients: {
-        1: {
-          status: "green",
-          reason: "green",
-          connected: true,
-          lastEvent: { type: "connected", at: 1, agoMs: 4000 },
-          events: [
-            { type: "connected", at: 1, agoMs: 4000 },
-            { type: "disconnected", at: 2, agoMs: 3000 },
-            { type: "reconnected", at: 3, agoMs: 2000 },
-          ],
-          metrics: {
-            rttP50: 1,
-            rttP95: 2,
-            jitterP95: 0,
-            lastRtt: 1,
-            lastProcessingMs: 1,
-            timeouts: 0,
-            consecutiveTimeouts: 0,
-            samples: 10,
-            acks: 10,
-            lossRate: 0,
-            burstTimeoutRate: 0,
-          },
-        },
-      },
-    },
-    overall: {
-      status: "red",
-      attributionNodeId: "site-b",
-      attributionLeg: "local",
-      attributionSelf: false,
-    },
-  };
-}
-
-// ------------------------------------------------------------
-// Monitor page
-// ------------------------------------------------------------
-
-test("monitor page: renders the full flower picture without throwing", () => {
-  const page = loadPage("monitor.js");
-
-  // The script's own initial render (state null) must not throw —
-  // banner idle, star hint, empty local panel.
-  deliver(
-    page.socket,
-    page.sandbox,
-    page.sandbox.PNDS.events.state,
-    sampleState(),
-  );
-
-  assert.equal(page.document.getElementById("f-url").value, "");
-  assert.ok(
-    page.document.getElementById("banner").classList.contains("st-red"),
-    "banner reflects the overall verdict",
-  );
-
-  const attribution = page.document.getElementById("banner-attribution");
-
-  assert.equal(attribution.textContent, "问题在 site-b 本地腿");
-
-  // The local panel rendered the performer card.
-  const localCards = page.document.getElementById("local-cards");
-
-  assert.equal(localCards.children.length, 1);
-  assert.ok(localCards.children[0].classList.contains("st-green"));
-
-  // Peer cards: the performer-pair formula lit up (all four segments
-  // measured: 1 + 12.5 + 40 + 8).
-  const cards = page.document.getElementById("cards");
-
-  assert.equal(cards.children.length, 2, "own card + one peer card");
+test("nearest geographic node previews its row/details, restores folding and keeps exact positions", t => {
+  const p = fixture(t); p.state(sample()); const before = positions(p);
+  assert.equal(p.get("map-labels").textContent.replaceAll("本站", ""), "");
+  assert.equal(p.d.querySelectorAll(".self-tag:not([hidden])").length, 1);
+  assert.equal(p.get("node-detail").open, false);
+  p.hover("北京大兴"); assert.equal(p.active(), "北京大兴"); assert.match(p.get("selected-name").textContent, /大兴/); assert.equal(p.get("node-detail").open, true);
+  p.hover("北京西城"); assert.equal(p.active(), "北京西城");
+  p.leave(); assert.equal(p.active(), "北京西城"); assert.equal(p.get("node-detail").open, false); assert.deepEqual(positions(p), before);
+  button(p, "北京大兴").click(); p.hover("武汉"); p.leave(); assert.equal(p.active(), "北京大兴"); assert.equal(p.get("node-detail").open, true);
 });
-
-test("monitor page: no burst marker anywhere — the phase is an internal detail (issue #11)", () => {
-  const page = loadPage("monitor.js");
-  const state = sampleState();
-
-  // Mid-burst on the hub leg: the last place a marker used to render
-  // (the own hub card's head) must stay name-only.
-  state.leg.probing = "burst";
-  deliver(page.socket, page.sandbox, page.sandbox.PNDS.events.state, state);
-
-  const card = page.document.getElementById("cards").children[0];
-  const head = card.children[0];
-
-  assert.equal(head.children[1].textContent, "site-a");
-
-  // The copy keys are gone from both tables — nothing left to render
-  // a marker with (the shape test in locale-follow.test.js pins the
-  // two tables to the same key set).
-  assert.equal(page.sandbox.PNDS.copy["zh-CN"].monitor.burst, undefined);
-  assert.equal(page.sandbox.PNDS.copy.en.monitor.burst, undefined);
+test("live readings preserve row/marker identity, keyboard focus, selection, folds and drafts", t => {
+  const p = fixture(t), data = sample(); p.state(data);
+  const name = button(p, "北京大兴"), mark = button(p, "北京大兴", ".map-mark"), edge = p.d.querySelector('[data-node="北京大兴"].edge');
+  name.focus(); assert.equal(p.active(), "北京大兴"); name.click(); p.get("connection").open = true;
+  input(p, "f-node", "editing a name"); const before = positions(p);
+  data.leg.peers["北京大兴"].summary.rttP50 = 29; p.state(data);
+  assert.equal(button(p, "北京大兴"), name); assert.equal(button(p, "北京大兴", ".map-mark"), mark); assert.equal(p.d.activeElement, name);
+  assert.equal(p.get("connection").open, true); assert.equal(p.get("f-node").value, "editing a name"); assert.equal(p.active(), "北京大兴"); assert.deepEqual(positions(p), before); assert.equal(p.d.querySelector('[data-node="北京大兴"].edge'), edge);
+  assert.match(p.get("detail-p50").textContent, /29/);
+  name.blur(); button(p, "武汉").focus(); assert.equal(p.active(), "武汉"); button(p, "武汉").blur(); assert.equal(p.active(), "北京大兴");
 });
-
-test("monitor page: env prefill lands on the FIRST state, not the null-state load render", () => {
-  const page = loadPage("monitor.js");
-
-  // Load-time render already ran inside loadPage (state null): the
-  // once-guard must NOT have been spent — the env arrives only with
-  // the state broadcast.
-  const state = sampleState();
-
-  state.env = {
-    hubUrl: "http://env-hub",
-    hubToken: "env-token",
-    hubRoom: "rehearsal",
-    nodeId: "env-node",
-  };
-
-  deliver(page.socket, page.sandbox, page.sandbox.PNDS.events.state, state);
-
-  assert.equal(page.document.getElementById("f-url").value, "http://env-hub");
-  assert.equal(page.document.getElementById("f-room").value, "rehearsal");
-  assert.equal(page.document.getElementById("f-node").value, "env-node");
-
-  const auto = page.socket.emitted.filter(([event]) => event === "hub:config");
-
-  assert.equal(auto.length, 1, "the startup config auto-submits once");
-  assert.deepEqual(JSON.parse(JSON.stringify(auto[0][1])), {
-    url: "http://env-hub",
-    token: "env-token",
-    room: "rehearsal",
-    nodeId: "env-node",
-  });
-
-  // Later states (1 Hz) neither re-submit nor clobber the form.
-  deliver(page.socket, page.sandbox, page.sandbox.PNDS.events.state, state);
-
-  assert.equal(
-    page.socket.emitted.filter(([event]) => event === "hub:config").length,
-    1,
-    "identical resubmission is suppressed",
-  );
+test("identity colors do not collide for the usual four nodes or shuffle on roster/quality updates", t => {
+  const p = fixture(t), data = sample(); p.state(data);
+  const colors = new Map([...p.d.querySelectorAll("tr[data-row]")].map(row => [row.dataset.row, row.style.getPropertyValue("--node-color")]));
+  assert.equal(new Set(colors.values()).size, 4);
+  data.leg.peers["武汉"].status = "red"; data.overall = { status: "red", attributionNodeId: "武汉" }; p.state(data);
+  for (const row of p.d.querySelectorAll("tr[data-row]")) assert.equal(row.style.getPropertyValue("--node-color"), colors.get(row.dataset.row));
+  delete data.leg.peers["内蒙古"]; p.state(data); assert.equal(p.d.querySelector('tr[data-row="北京大兴"]').style.getPropertyValue("--node-color"), colors.get("北京大兴"));
 });
-
-test("monitor page: the env prefill wins over a saved form, per field (issue #15)", () => {
-  // Story 2 of the App-present shape: the operator hand-filled the form
-  // before (browser memory); the App's injected values must surface —
-  // old memory never silently masks the App config. Field by field: an
-  // empty env field still falls back to what was saved.
-  const page = loadPage("monitor.js");
-
-  page.sandbox.localStorage.setItem(
-    "tnd-hub-config",
-    JSON.stringify({
-      url: "http://saved",
-      token: "saved-token",
-      room: "saved-room",
-      nodeId: "saved-node",
-    }),
-  );
-
-  const state = sampleState();
-
-  state.env = {
-    hubUrl: "http://env-hub",
-    hubToken: "env-token",
-    hubRoom: "rehearsal",
-    nodeId: "env-node",
-  };
-  deliver(page.socket, page.sandbox, page.sandbox.PNDS.events.state, state);
-
-  assert.equal(page.document.getElementById("f-url").value, "http://env-hub");
-  assert.equal(page.document.getElementById("f-token").value, "env-token");
-  assert.equal(page.document.getElementById("f-room").value, "rehearsal");
-  assert.equal(page.document.getElementById("f-node").value, "env-node");
-
-  const auto = page.socket.emitted.filter(([event]) => event === "hub:config");
-
-  assert.equal(auto.length, 1);
-  assert.equal(
-    auto[0][1].url,
-    "http://env-hub",
-    "auto-submit uses the env values",
-  );
-
-  // Per field: env carries ONLY the url — the saved values fill the rest.
-  const partial = loadPage("monitor.js");
-
-  partial.sandbox.localStorage.setItem(
-    "tnd-hub-config",
-    JSON.stringify({ url: "http://saved", token: "saved-token" }),
-  );
-
-  const partialState = sampleState();
-
-  partialState.env = {
-    hubUrl: "http://env-hub",
-    hubToken: "",
-    hubRoom: "",
-    nodeId: "",
-  };
-  deliver(
-    partial.socket,
-    partial.sandbox,
-    partial.sandbox.PNDS.events.state,
-    partialState,
-  );
-
-  assert.equal(
-    partial.document.getElementById("f-url").value,
-    "http://env-hub",
-  );
-  assert.equal(partial.document.getElementById("f-token").value, "saved-token");
+test("unknown locations are listed without invented geographic nodes; topology still includes everyone", t => {
+  const p = fixture(t), data = sample(); data.leg.network.hubLocation = null; for (const value of [data.leg, ...Object.values(data.leg.peers)]) value.network.location = null; p.state(data);
+  assert.equal(p.d.querySelectorAll(".map-mark").length, 0); assert.equal(p.d.querySelectorAll(".unknown-mark").length, 4); assert.equal(p.get("hub-layer").children.length, 0); assert.equal(p.get("map-empty").hidden, false);
+  p.d.querySelector('[data-view="topology"]').click(); assert.equal(p.d.querySelectorAll(".map-mark").length, 4); assert.equal(p.get("hub-layer").children.length, 1);
+  p.d.querySelector('[data-view="geography"]').click(); assert.equal(p.get("hub-layer").children.length, 0);
 });
-
-test("monitor page: both sources empty keeps the form empty — nothing auto-submits", () => {
-  const page = loadPage("monitor.js");
-
-  deliver(
-    page.socket,
-    page.sandbox,
-    page.sandbox.PNDS.events.state,
-    sampleState(),
-  );
-
-  for (const id of ["f-url", "f-token", "f-room", "f-node"]) {
-    assert.equal(
-      page.document.getElementById(id).value,
-      "",
-      `${id} stays empty`,
-    );
+test("disconnected and stale nodes hide old readings, with unknown remotes separated from real remote staleness", t => {
+  const p = fixture(t), data = sample(); data.leg.connected = false; data.leg.reason = "transport"; for (const value of Object.values(data.leg.peers)) value.unknown = true; p.state(data);
+  assert.match(p.get("banner-title").textContent, /本站与 HUB 断开/); button(p, "北京大兴").click(); assert.equal(p.get("detail-p50").textContent, "—"); assert.match(p.get("detail-reason").textContent, /无法确认/);
+  const stable = sample(); stable.leg.peers["北京大兴"].connected = false; stable.leg.peers["北京大兴"].stale = true; stable.leg.peers["北京大兴"].agoMs = 8000; p.state(stable);
+  assert.match(p.get("selected-summary").textContent, /数据中断/); assert.equal(p.get("detail-p50").textContent, "—"); assert.match(p.get("detail-location").textContent, /上次位置/);
+});
+test("App configuration is read-only and never automatically resubmitted on snapshots or socket reconnect", t => {
+  const p = fixture(t), data = sample(); data.env = { hubUrl: data.activeConfig.url, hubToken: data.activeConfig.token, hubRoom: data.activeConfig.room, nodeId: data.activeConfig.nodeId }; p.state(data); p.state(data); p.deliver("connect");
+  assert.equal(p.get("connection-editor").hidden, true); assert.equal(p.get("f-room").hidden, true); assert.equal(p.get("f-room-derived").textContent, "work_1"); assert.equal(p.emitted.length, 0);
+  data.leg.connected = false; p.state(data); p.get("retry").click(); assert.deepEqual(JSON.parse(JSON.stringify(p.emitted[0][1])), data.activeConfig);
+});
+test("standalone saved config applies once, malformed storage is harmless, edits survive locale changes", t => {
+  const p = fixture(t); p.w.localStorage.setItem("tnd-hub-config", JSON.stringify({ url: "https://saved.example", token: "saved", room: "saved-room", nodeId: "saved-node" }));
+  p.state({ configured: false, activeConfig: null, env: {}, leg: null, overall: null }); p.state({ configured: false, activeConfig: null, env: {}, leg: null, overall: null }); assert.equal(p.emitted.length, 1);
+  input(p, "f-node", "edited"); p.w.dispatchEvent(new p.w.MessageEvent("message", { data: { type: "pnds:locale", version: 1, locale: "en" } })); assert.equal(p.get("f-node").value, "edited"); assert.equal(p.d.documentElement.lang, "en");
+  submit(p, "connection-form"); assert.equal(p.emitted.at(-1)[1].nodeId, "edited");
+});
+test("manual correction supports legacy hubs, optional labels, zero coordinates, validation, clear and finite acknowledgement", t => {
+  const p = fixture(t), data = sample(); data.leg.network.manualLocationSupported = false; p.state(data); assert.equal(p.get("location-editor").hidden, false);
+  input(p, "location-latitude", ""); input(p, "location-longitude", "0"); submit(p, "location-form"); assert.equal(p.emitted.length, 0); assert.match(p.get("location-feedback").textContent, /有效纬度/);
+  input(p, "location-label", ""); input(p, "location-latitude", "0"); submit(p, "location-form");
+  const request = p.emitted.at(-1); assert.equal(request[0], events.setLocation); assert.deepEqual(JSON.parse(JSON.stringify(request[1])), { label: "", latitude: 0, longitude: 0 }); assert.equal(p.get("location-save").disabled, true);
+  p.deliver("disconnect"); assert.equal(p.get("location-save").disabled, false); request[2]({ ok: true }); assert.match(p.get("location-feedback").textContent, /未能更新/);
+  p.deliver("connect"); p.state(data);
+  p.get("location-reset").click(); const reset = p.emitted.at(-1); assert.equal(reset[1], null); reset[2]({ ok: true }); assert.match(p.get("location-feedback").textContent, /已恢复/);
+  submit(p, "location-form"); const timer = [...p.timers.values()].find(value => value.delay === 5000); assert.ok(timer); timer.fn(); assert.equal(p.get("location-save").disabled, false);
+});
+test("manual drafts stay during measurement but clear on node/room/url changes and ignore obsolete ack", t => {
+  const p = fixture(t), data = sample(); p.state(data); input(p, "location-label", "a draft"); p.state(data); assert.equal(p.get("location-label").value, "a draft");
+  submit(p, "location-form"); const request = p.emitted.at(-1); data.activeConfig.room = "different-room"; data.leg.network.location = null; p.state(data);
+  assert.equal(p.get("location-label").value, ""); assert.equal(p.get("location-feedback").textContent, ""); request[2]({ ok: true }); assert.equal(p.get("location-feedback").textContent, "");
+});
+test("theme changes update all identity colors without rebuilding interaction or moving nodes", t => {
+  const p = fixture(t, "?theme=pond"), data = sample(); p.state(data); const name = button(p, "北京大兴"), before = positions(p), bridge = require("../lib/theme-follow");
+  for (const theme of ["sand", "stage", "brutal", "pond"]) {
+    p.w.dispatchEvent(new p.w.MessageEvent("message", { data: { type: "pnds:theme", version: 1, theme, palette: bridge.THEME_PALETTES[theme] } }));
+    assert.equal(p.d.documentElement.getAttribute("data-utility-theme"), theme); assert.equal(button(p, "北京大兴"), name); assert.deepEqual(positions(p), before);
   }
-
-  assert.equal(
-    page.socket.emitted.filter(([event]) => event === "hub:config").length,
-    0,
-    "no url+token → no auto-connection",
-  );
 });
 
-test("monitor page: a manual edit is session-only — the next load restores the env config", () => {
-  // Story 3: the operator hand-edits a value for one ad-hoc attempt
-  // (e.g. a temporary node name); the edit saves to localStorage as
-  // before, but the App's env is what the NEXT page load prefills —
-  // the manual edit never outlives the session.
-  const env = {
-    hubUrl: "http://env-hub",
-    hubToken: "env-token",
-    hubRoom: "rehearsal",
-    nodeId: "env-node",
-  };
-
-  const first = loadPage("monitor.js");
-  const state = sampleState();
-
-  state.env = env;
-  deliver(first.socket, first.sandbox, first.sandbox.PNDS.events.state, state);
-
-  // The operator edits the node name and submits — the attempt is what
-  // the browser remembers.
-  first.document.getElementById("f-node").value = "my-adhoc-node";
-  first.document.getElementById("b-connect").listeners.click[0]();
-
-  const saved = first.sandbox.localStorage.getItem("tnd-hub-config");
-
-  assert.equal(
-    JSON.parse(saved).nodeId,
-    "my-adhoc-node",
-    "the manual attempt saved to localStorage",
-  );
-
-  // The next load: the same browser memory, the same env — the env wins.
-  const second = loadPage("monitor.js");
-
-  second.sandbox.localStorage.setItem("tnd-hub-config", saved);
-
-  const stateAgain = sampleState();
-
-  stateAgain.env = env;
-  deliver(
-    second.socket,
-    second.sandbox,
-    second.sandbox.PNDS.events.state,
-    stateAgain,
-  );
-
-  assert.equal(
-    second.document.getElementById("f-node").value,
-    "env-node",
-    "back to the App config",
-  );
-  assert.equal(second.document.getElementById("f-url").value, "http://env-hub");
-
-  const auto = second.socket.emitted.filter(
-    ([event]) => event === "hub:config",
-  );
-
-  assert.equal(auto.length, 1);
-  assert.equal(
-    auto[0][1].nodeId,
-    "env-node",
-    "auto-submit is the env config again",
-  );
-});
-
-test("monitor page: a manual edit survives a mid-session socket reconnect", () => {
-  // "仅当次会话生效" covers the whole session, not just until the
-  // monitor's socket blips: the reconnect's auto-submit re-sends the
-  // SUBMITTED config (the session's intent), never the startup one —
-  // otherwise a Wi-Fi flap would silently roll the ad-hoc edit back to
-  // the App's values before the page ever reloads (issue #15).
-  const page = loadPage("monitor.js");
-  const state = sampleState();
-
-  state.env = {
-    hubUrl: "http://env-hub",
-    hubToken: "env-token",
-    hubRoom: "rehearsal",
-    nodeId: "env-node",
-  };
-  deliver(page.socket, page.sandbox, page.sandbox.PNDS.events.state, state);
-
-  page.document.getElementById("f-node").value = "my-adhoc-node";
-  page.document.getElementById("b-connect").listeners.click[0]();
-
-  // The transient reconnect: what leaves for the server now?
-  page.socket.emitted.length = 0;
-  deliver(page.socket, page.sandbox, "connect");
-
-  const resubmitted = page.socket.emitted.filter(
-    ([event]) => event === "hub:config",
-  );
-
-  assert.equal(resubmitted.length, 1);
-  assert.equal(
-    resubmitted[0][1].nodeId,
-    "my-adhoc-node",
-    "the session's own config, not the startup env",
-  );
-});
-
-test("monitor page: an env room replaces the input with the derived full name (issue #15)", () => {
-  // Story 5: with the App present the room is derived ({project
-  // id}_{group}) — the input exits, a read-only line shows the full
-  // name to verify against, and the connection carries it verbatim.
-  const page = loadPage("monitor.js");
-  const derivedRoom = "telematic-network-diagnostics_2";
-  const state = sampleState();
-
-  state.env = {
-    hubUrl: "http://env-hub",
-    hubToken: "env-token",
-    hubRoom: derivedRoom,
-    nodeId: "env-node",
-  };
-  deliver(page.socket, page.sandbox, page.sandbox.PNDS.events.state, state);
-
-  const roomInput = page.document.getElementById("f-room");
-  const derived = page.document.getElementById("f-room-derived");
-
-  assert.ok(roomInput.classList.contains("hidden"), "the room input exits");
-  assert.ok(!derived.classList.contains("hidden"), "the derived name shows");
-  assert.equal(derived.textContent, derivedRoom);
-
-  const auto = page.socket.emitted.filter(([event]) => event === "hub:config");
-
-  assert.equal(auto.length, 1);
-  assert.equal(
-    auto[0][1].room,
-    derivedRoom,
-    "the connection carries the derived room verbatim",
-  );
-
-  // Without an env room the hand-filled behavior is unchanged (story 4):
-  // the input stays, the saved room prefills it, nothing else appears.
-  // The standalone path's own memory too: no env at all → the saved
-  // url+token still auto-connect (the no-App "reopen, no re-typing"
-  // shape, unchanged since #3).
-  const solo = loadPage("monitor.js");
-
-  solo.sandbox.localStorage.setItem(
-    "tnd-hub-config",
-    JSON.stringify({
-      url: "http://saved",
-      token: "saved-token",
-      room: "my-room",
-    }),
-  );
-
-  const soloState = sampleState();
-
-  soloState.env = { hubUrl: "", hubToken: "", hubRoom: "", nodeId: "" };
-  deliver(solo.socket, solo.sandbox, solo.sandbox.PNDS.events.state, soloState);
-
-  const soloInput = solo.document.getElementById("f-room");
-  const soloDerived = solo.document.getElementById("f-room-derived");
-
-  assert.ok(
-    !soloInput.classList.contains("hidden"),
-    "no App → the room input stays",
-  );
-  assert.equal(soloInput.value, "my-room");
-  assert.ok(
-    soloDerived.classList.contains("hidden"),
-    "no derived display without the App",
-  );
-
-  const soloAuto = solo.socket.emitted.filter(
-    ([event]) => event === "hub:config",
-  );
-
-  assert.equal(
-    soloAuto.length,
-    1,
-    "the saved config auto-submits without any env",
-  );
-  assert.equal(soloAuto[0][1].url, "http://saved");
-  assert.equal(soloAuto[0][1].room, "my-room");
-});
-
-test("monitor page: the four-state button reads the App-present form as clean — 已连接 (issue #15)", () => {
-  // The dirty check under the new shape: the env-prefilled form IS the
-  // live config (the server normalized and echoed the same values), so
-  // a connected leg words the button 已连接 with nothing ever typed.
-  const page = loadPage("monitor.js");
-  const button = page.document.getElementById("b-connect");
-  const state = sampleState();
-
-  state.env = {
-    hubUrl: "http://env-hub",
-    hubToken: "env-token",
-    hubRoom: "rehearsal",
-    nodeId: "env-node",
-  };
-  state.activeConfig = {
-    url: "http://env-hub",
-    token: "env-token",
-    room: "rehearsal",
-    nodeId: "env-node",
-  };
-  state.leg.connected = true;
-  state.leg.everConnected = true;
-  deliver(page.socket, page.sandbox, page.sandbox.PNDS.events.state, state);
-
-  assert.equal(button.textContent, "已连接");
-  assert.equal(button.disabled, true);
-
-  // One drift from the env form (a temporary node name) → 重新连接.
-  page.document.getElementById("f-node").value = "adhoc";
-  deliver(page.socket, page.sandbox, page.sandbox.PNDS.events.state, state);
-
-  assert.equal(button.textContent, "重新连接");
-  assert.equal(button.disabled, false);
-});
-
-// ------------------------------------------------------------
-// Monitor page — connect button state machine (issue #12)
-// ------------------------------------------------------------
-
-test("monitor page: connect button walks the four states from server truth", () => {
-  const page = loadPage("monitor.js");
-  const events = page.sandbox.PNDS.events;
-  const button = page.document.getElementById("b-connect");
-  const setForm = (url, token, room, node) => {
-    page.document.getElementById("f-url").value = url;
-    page.document.getElementById("f-token").value = token;
-    page.document.getElementById("f-room").value = room;
-    page.document.getElementById("f-node").value = node;
-  };
-
-  // Before any state: nothing configured → 连接, clickable.
-  assert.equal(button.textContent, "连接");
-  assert.equal(button.disabled, false);
-
-  // Submitted → first connect still pending → 连接中…, disabled. The
-  // flag is leg.everConnected on the wire — not page memory.
-  const pending = sampleState();
-
-  pending.leg.connected = false;
-  pending.leg.everConnected = false;
-  deliver(page.socket, page.sandbox, events.state, pending);
-
-  assert.equal(button.textContent, "连接中…");
-  assert.equal(button.disabled, true);
-
-  // Connected but the form (still empty) ≠ activeConfig → 重新连接.
-  deliver(page.socket, page.sandbox, events.state, sampleState());
-
-  assert.equal(button.textContent, "重新连接");
-  assert.equal(button.disabled, false);
-
-  // The form is edited to MATCH the live config → 已连接, disabled.
-  // The empty room counts clean against the server's "default".
-  setForm("http://hub", "hub-token", "", "site-a");
-  deliver(page.socket, page.sandbox, events.state, sampleState());
-
-  assert.equal(button.textContent, "已连接");
-  assert.equal(button.disabled, true);
-
-  // One field drifts → 重新连接 again (exact compare: one character
-  // of node name is a different config).
-  setForm("http://hub", "hub-token", "", "site-B");
-  deliver(page.socket, page.sandbox, events.state, sampleState());
-
-  assert.equal(button.textContent, "重新连接");
-  assert.equal(button.disabled, false);
-
-  // The transport DROPS after having been connected → 连接, clickable.
-  const dropped = sampleState();
-
-  dropped.leg.connected = false;
-  deliver(page.socket, page.sandbox, events.state, dropped);
-
-  assert.equal(button.textContent, "连接");
-  assert.equal(button.disabled, false);
-});
-
-test("monitor page: a red metric never un-words 已连接 — transport ≠ health", () => {
-  const page = loadPage("monitor.js");
-  const events = page.sandbox.PNDS.events;
-  const button = page.document.getElementById("b-connect");
-
-  // The env scenario: the env values prefill the form AND are what the
-  // server reports live (room left empty — the server's "default"
-  // counts clean). Same shape as a page refresh or another device:
-  // state alone decides, nothing was ever clicked.
-  const state = sampleState();
-
-  state.env = {
-    hubUrl: "http://hub",
-    hubToken: "hub-token",
-    hubRoom: "",
-    nodeId: "site-a",
-  };
-  state.leg.status = "red";
-  state.leg.reason = "jitterRed";
-  deliver(page.socket, page.sandbox, events.state, state);
-
-  assert.equal(button.textContent, "已连接");
-  assert.equal(button.disabled, true);
-  assert.equal(
-    page.socket.emitted.filter(([event]) => event === "hub:config").length,
-    1,
-    "the env config auto-submitted once",
-  );
-
-  // The English table words the same states.
-  for (const handler of page.messageListeners) {
-    handler(LOCALE_MESSAGE("en"));
+test("node-color slots survive active peers while departed names do not exhaust the palette", t => {
+  const p = fixture(t), data = sample(), peer = structuredClone(data.leg.peers["北京大兴"]);
+  data.leg.peers = { anchor: peer };
+  p.state(data);
+  const color = id => p.d.querySelector(`tr[data-row="${id}"]`).style.getPropertyValue("--node-color");
+  const anchorColor = color("anchor"), ownColor = color("北京西城");
+  for (let round = 0; round < 30; round++) {
+    data.leg.peers = { anchor: peer, [`new-${round}-a`]: peer, [`new-${round}-b`]: peer };
+    p.state(data);
+    const colors = [...p.d.querySelectorAll("tr[data-row]")].map(row => row.style.getPropertyValue("--node-color"));
+    assert.equal(new Set(colors).size, 4, `four active identities stay distinct after round ${round}`);
+    assert.equal(color("anchor"), anchorColor); assert.equal(color("北京西城"), ownColor);
   }
-
-  assert.equal(button.textContent, "Connected");
-  assert.equal(button.disabled, true);
 });
 
-test("monitor page: no hub configured — the button stays 连接 with no active config", () => {
-  const page = loadPage("monitor.js");
-  const events = page.sandbox.PNDS.events;
-  const button = page.document.getElementById("b-connect");
-
-  const idle = sampleState();
-
-  idle.configured = false;
-  idle.activeConfig = null;
-  idle.leg = null;
-  idle.overall = null;
-  deliver(page.socket, page.sandbox, events.state, idle);
-
-  assert.equal(button.textContent, "连接");
-  assert.equal(button.disabled, false);
+test("a roster shrinking below five repairs old duplicate slots without recoloring unique survivors", t => {
+  const p = fixture(t), data = sample(), peer = structuredClone(data.leg.peers["北京大兴"]);
+  data.leg.peers = Object.fromEntries(Array.from({ length: 6 }, (_, index) => [`extra-${index}`, peer]));
+  p.state(data);
+  const before = new Map([...p.d.querySelectorAll("tr[data-row]")].map(row => [row.dataset.row, row.style.getPropertyValue("--node-color")]));
+  const groups = new Map();
+  for (const [id, color] of before) { if (!groups.has(color)) groups.set(color, []); groups.get(color).push(id); }
+  const duplicate = [...groups.values()].find(ids => ids.length > 1), unique = [...groups.values()].find(ids => ids.length === 1)[0];
+  const keep = new Set(["北京西城", ...duplicate, unique]);
+  data.leg.peers = Object.fromEntries(Object.entries(data.leg.peers).filter(([id]) => keep.has(id)));
+  p.state(data);
+  const after = new Map([...p.d.querySelectorAll("tr[data-row]")].map(row => [row.dataset.row, row.style.getPropertyValue("--node-color")]));
+  assert.ok(after.size <= 5); assert.equal(new Set(after.values()).size, after.size); assert.equal(after.get(unique), before.get(unique));
 });
 
-// ------------------------------------------------------------
-// Monitor page — locale following (the App language bridge)
-// ------------------------------------------------------------
-
-const LOCALE_MESSAGE = (locale) => ({
-  data: { type: "pnds:locale", version: 1, locale },
+test("offline control submissions never emit or replay on observer reconnect", t => {
+  const p = fixture(t), data = sample(); p.state(data); p.deliver("disconnect");
+  const before = p.emitted.length;
+  submit(p, "location-form"); assert.equal(p.emitted.length, before); assert.match(p.get("location-feedback").textContent, /未能更新/); assert.equal(p.get("location-save").disabled, false);
+  p.get("location-reset").click(); submit(p, "connection-form"); p.get("retry").dispatchEvent(new p.w.MouseEvent("click"));
+  assert.equal(p.emitted.length, before); assert.equal(p.get("b-connect").disabled, true); assert.equal(p.get("retry").disabled, true);
+  p.deliver("connect"); submit(p, "location-form"); submit(p, "connection-form"); assert.equal(p.emitted.length, before, "a transport reconnect alone does not authorize stale controls");
+  p.state(data); assert.equal(p.emitted.length, before, "fresh data does not replay rejected submissions");
 });
 
-test("monitor page: renders Chinese by default, before any bridge traffic", () => {
-  const page = loadPage("monitor.js", { localeSearch: "" });
-
-  deliver(
-    page.socket,
-    page.sandbox,
-    page.sandbox.PNDS.events.state,
-    sampleState(),
-  );
-
-  assert.equal(
-    page.document.getElementById("sub-label").textContent,
-    "监视端 — 全网视图",
-  );
-  assert.equal(
-    page.document.getElementById("form-title").textContent,
-    "Hub 连接",
-  );
-  assert.equal(
-    page.document.getElementById("b-connect").textContent,
-    "重新连接",
-  );
-  assert.equal(
-    page.document.getElementById("banner-copy").textContent,
-    "不适宜演出",
-  );
-  assert.equal(
-    page.document.getElementById("banner-attribution").textContent,
-    "问题在 site-b 本地腿",
-  );
-
-  // The performer card's reason line maps the wire key through the
-  // Chinese table.
-  const card = page.document.getElementById("local-cards").children[0];
-  const reason = card.children.find((node) =>
-    node.classList.contains("reason"),
-  );
-
-  assert.equal(reason.textContent, "本地网络良好");
-});
-
-test("monitor page: a locale message re-renders the whole console live", () => {
-  const page = loadPage("monitor.js", { localeSearch: "" });
-
-  deliver(
-    page.socket,
-    page.sandbox,
-    page.sandbox.PNDS.events.state,
-    sampleState(),
-  );
-
-  // The App switches its language to English.
-  for (const handler of page.messageListeners) {
-    handler(LOCALE_MESSAGE("en"));
-  }
-
-  assert.equal(
-    page.document.getElementById("sub-label").textContent,
-    "Monitor — flower view",
-  );
-  assert.equal(
-    page.document.getElementById("form-title").textContent,
-    "Hub connection",
-  );
-  assert.equal(
-    page.document.getElementById("b-connect").textContent,
-    "Reconnect",
-  );
-  assert.equal(
-    page.document.getElementById("banner-copy").textContent,
-    "Not suitable for performance",
-  );
-  assert.equal(
-    page.document.getElementById("banner-attribution").textContent,
-    "Problem: site-b local leg",
-  );
-
-  const card = page.document.getElementById("local-cards").children[0];
-  const head = card.children[0];
-
-  // The performer card's title carries no burst/calm marker: the numbers
-  // are load-scoped (steady), so the phase marker would only flicker.
-  assert.equal(head.children[1].textContent, "Performer 1");
-
-  // A malformed message changes nothing.
-  for (const handler of page.messageListeners) {
-    handler({ data: { type: "other", version: 1, locale: "zh-CN" } });
-    handler({ data: null });
-  }
-
-  assert.equal(
-    page.document.getElementById("b-connect").textContent,
-    "Reconnect",
-  );
-  assert.equal(page.sandbox.PNDS_LOCALE.current(), "en");
-
-  // Back to Chinese (a language switch in the other direction).
-  for (const handler of page.messageListeners) {
-    handler(LOCALE_MESSAGE("zh-CN"));
-  }
-
-  assert.equal(
-    page.document.getElementById("b-connect").textContent,
-    "重新连接",
-  );
-});
-
-test("monitor page: ?lang= seeds the first frame before any message", () => {
-  const page = loadPage("monitor.js", { localeSearch: "?lang=en&theme=stage" });
-
-  deliver(
-    page.socket,
-    page.sandbox,
-    page.sandbox.PNDS.events.state,
-    sampleState(),
-  );
-
-  assert.equal(
-    page.document.getElementById("b-connect").textContent,
-    "Reconnect",
-  );
-  assert.equal(page.document.documentElement.lang, "en");
-});
-
-test("monitor page: a language switch never clobbers the form inputs", () => {
-  const page = loadPage("monitor.js", { localeSearch: "" });
-  const state = sampleState();
-
-  state.env = {
-    hubUrl: "http://env-hub",
-    hubToken: "env-token",
-    hubRoom: "",
-    nodeId: "",
-  };
-
-  deliver(page.socket, page.sandbox, page.sandbox.PNDS.events.state, state);
-  assert.equal(page.document.getElementById("f-url").value, "http://env-hub");
-
-  // The operator edits the node name mid-session…
-  page.document.getElementById("f-node").value = "my editing";
-
-  // …a locale switch re-words the chrome but leaves the inputs alone.
-  for (const handler of page.messageListeners) {
-    handler(LOCALE_MESSAGE("en"));
-  }
-
-  assert.equal(page.document.getElementById("l-node").textContent, "Node name");
-  assert.equal(
-    page.document.getElementById("f-node").attributes.placeholder,
-    "site name",
-    "the node placeholder follows the locale too",
-  );
-  assert.equal(page.document.getElementById("f-url").value, "http://env-hub");
-  assert.equal(page.document.getElementById("f-node").value, "my editing");
-  assert.equal(page.document.getElementById("l-url").textContent, "Hub URL");
-});
-
-// ------------------------------------------------------------
-// Performer page
-// ------------------------------------------------------------
-
-test("performer page: joins with the persisted token, answers probes, paints the dots", () => {
-  const page = loadPage("performer.js");
-  const events = page.sandbox.PNDS.events;
-
-  // Connect → join with the persisted token (none yet → null).
-  deliver(page.socket, page.sandbox, "connect");
-
-  assert.equal(
-    JSON.stringify(
-      page.socket.emitted.find(([event]) => event === events.join)[1],
-    ),
-    JSON.stringify({ token: null }),
-  );
-
-  // The server hands back an id + token; the page persists it.
-  deliver(page.socket, page.sandbox, events.joined, {
-    id: 3,
-    token: "t".repeat(48),
-    recovered: false,
-  });
-
-  assert.equal(
-    page.sandbox.localStorage.getItem("tnd-performer-token"),
-    "t".repeat(48),
-  );
-
-  // A probe is answered immediately with its seq.
-  deliver(page.socket, page.sandbox, events.probe, { seq: 7 });
-
-  const ack = page.socket.emitted.find(([event]) => event === events.ack);
-
-  assert.equal(ack[1].seq, 7);
-  assert.equal(typeof ack[1].t0, "number");
-
-  // The site dots read the state: local green, hub green. This device's
-  // own dot stays gray — client 3 has no card in the sample state.
-  deliver(page.socket, page.sandbox, events.state, sampleState());
-
-  assert.ok(
-    page.document.getElementById("row-local").classList.contains("st-green"),
-  );
-  assert.ok(
-    page.document.getElementById("row-hub").classList.contains("st-green"),
-  );
-  assert.ok(
-    page.document.getElementById("row-self").classList.contains("st-gray"),
-  );
-  assert.equal(page.document.getElementById("w-self").textContent, "GRAY");
-
-  assert.equal(page.document.getElementById("w-local").textContent, "GREEN");
-
-  // No hub configured → the hub dot falls back to idle-gray, the
-  // local dot keeps its color.
-  const noHub = sampleState();
-
-  noHub.leg = null;
-  deliver(page.socket, page.sandbox, events.state, noHub);
-
-  assert.ok(
-    page.document.getElementById("row-hub").classList.contains("st-idle"),
-  );
-  assert.ok(
-    page.document.getElementById("row-local").classList.contains("st-green"),
-  );
-
-  // A reconnect re-joins with the persisted token.
-  deliver(page.socket, page.sandbox, "connect");
-
-  assert.equal(
-    JSON.stringify(
-      page.socket.emitted.filter(([event]) => event === events.join).pop()[1],
-    ),
-    JSON.stringify({ token: "t".repeat(48) }),
-  );
-});
-
-test("performer page: the own dot mirrors THIS device's local-leg card, live", () => {
-  const page = loadPage("performer.js");
-  const events = page.sandbox.PNDS.events;
-
-  deliver(page.socket, page.sandbox, events.joined, {
-    id: 3,
-    token: "t".repeat(48),
-    recovered: false,
-  });
-
-  const withSelf = (status) => {
-    const state = sampleState();
-
-    state.local.clients["3"] = {
-      ...state.local.clients["1"],
-      status,
-    };
-    deliver(page.socket, page.sandbox, events.state, state);
-  };
-
-  // Every server verdict lands on the own dot as it is measured.
-  for (const status of ["gray", "green", "yellow", "red", "green"]) {
-    withSelf(status);
-
-    assert.ok(
-      page.document
-        .getElementById("row-self")
-        .classList.contains("st-" + status),
-      status + " paints the own dot",
-    );
-    assert.equal(
-      page.document.getElementById("w-self").textContent,
-      status.toUpperCase(),
-    );
-  }
-
-  // Another performer's verdict is not ours: client 1 red (the site
-  // summary follows the worst), ours green.
-  const foreign = sampleState();
-
-  foreign.local.clients["1"].status = "red";
-  foreign.local.status = "red";
-  foreign.local.clients["3"] = {
-    ...foreign.local.clients["1"],
-    status: "green",
-  };
-  deliver(page.socket, page.sandbox, events.state, foreign);
-
-  assert.ok(
-    page.document.getElementById("row-self").classList.contains("st-green"),
-  );
-  assert.ok(
-    page.document.getElementById("row-local").classList.contains("st-red"),
-    "the site row still reads the site worst",
-  );
-
-  // A disconnect clears the identity: the own dot goes gray and a late
-  // state broadcast must not repaint it.
-  deliver(page.socket, page.sandbox, "disconnect");
-
-  withSelf("red");
-  assert.ok(
-    page.document.getElementById("row-self").classList.contains("st-gray"),
-  );
-  assert.equal(page.document.getElementById("w-self").textContent, "GRAY");
-});
-
-// ------------------------------------------------------------
-// Performer page — voluntary exit (issue #10)
-// ------------------------------------------------------------
-
-test("performer page: leave button exits — leave emitted, socket closed, cover shown, dots gone", () => {
-  const page = loadPage("performer.js");
-  const events = page.sandbox.PNDS.events;
-
-  deliver(page.socket, page.sandbox, "connect");
-  deliver(page.socket, page.sandbox, events.joined, {
-    id: 1,
-    token: "t".repeat(48),
-    recovered: false,
-  });
-
-  // Paint the dots once (client 1 is green in the sample state).
-  deliver(page.socket, page.sandbox, events.state, sampleState());
-  assert.ok(
-    page.document.getElementById("row-self").classList.contains("st-green"),
-  );
-
-  const cover = page.document.getElementById("left-cover");
-  const perf = page.document.getElementById("perf");
-  const leaveButton = page.document.getElementById("b-leave");
-
-  assert.ok(cover.classList.contains("hidden"), "the cover starts hidden");
-
-  click(leaveButton);
-
-  assert.ok(
-    page.socket.emitted.some(([event]) => event === events.leave),
-    "the leave packet is emitted",
-  );
-  assert.equal(
-    page.socket.closes,
-    0,
-    "the page does not close in the same tick (flush race)",
-  );
-  assert.ok(!cover.classList.contains("hidden"), "the left cover shows");
-  assert.equal(
-    page.document.getElementById("left-title").textContent,
-    "已退出检测 · Left testing",
-    "the VOLUNTARY exit wording (the monitor-removed variant differs)",
-  );
-  assert.ok(perf.classList.contains("hidden"), "the dots are gone");
-  assert.ok(
-    leaveButton.classList.contains("hidden"),
-    "the leave button is gone too",
-  );
-
-  // The server processed the leave and kicked the socket — the page
-  // closes for good (no auto-reconnect).
-  deliver(page.socket, page.sandbox, "disconnect");
-
-  assert.equal(page.socket.closes, 1);
-
-  // A state broadcast arriving while exited repaints nothing: the late
-  // broadcast says red, the (hidden) dots keep their last paint.
-  const turnedRed = sampleState();
-
-  turnedRed.local.clients["1"].status = "red";
-  deliver(page.socket, page.sandbox, events.state, turnedRed);
-  assert.ok(
-    page.document.getElementById("row-self").classList.contains("st-green"),
-    "no repaint while exited",
-  );
-
-  // The exit stays in memory only: localStorage carries the token and
-  // nothing else — a killed page reopening rejoins normally.
-  assert.deepEqual([...page.sandbox.storage.keys()], ["tnd-performer-token"]);
-});
-
-test("performer page: exited state does not auto-rejoin; the cover tap rejoins with the same token", () => {
-  const page = loadPage("performer.js");
-  const events = page.sandbox.PNDS.events;
-
-  deliver(page.socket, page.sandbox, "connect");
-  deliver(page.socket, page.sandbox, events.joined, {
-    id: 1,
-    token: "t".repeat(48),
-    recovered: false,
-  });
-
-  click(page.document.getElementById("b-leave"));
-
-  // The server's kick arrives (its processing of the leave): the page
-  // closes for good.
-  deliver(page.socket, page.sandbox, "disconnect");
-  assert.equal(page.socket.closes, 1);
-
-  // A stray connect while exited (lock/unlock, a socket.io leftover)
-  // must NOT re-join.
-  deliver(page.socket, page.sandbox, "connect");
-
-  assert.equal(
-    page.socket.emitted.filter(([event]) => event === events.join).length,
-    1,
-    "no join while exited",
-  );
-
-  // The whole cover is the rejoin button.
-  click(page.document.getElementById("left-cover"));
-
-  assert.equal(page.socket.opens, 1, "the socket is reopened");
-  assert.ok(
-    page.document.getElementById("left-cover").classList.contains("hidden"),
-  );
-  assert.ok(!page.document.getElementById("perf").classList.contains("hidden"));
-
-  deliver(page.socket, page.sandbox, "connect");
-
-  const joins = page.socket.emitted.filter(([event]) => event === events.join);
-
-  assert.equal(joins.length, 2);
-  assert.equal(
-    joins[1][1].token,
-    "t".repeat(48),
-    "rejoins with the SAME persisted token (the server hands out a new id)",
-  );
-
-  // The fresh identity renders as a new client.
-  deliver(page.socket, page.sandbox, events.joined, {
-    id: 2,
-    token: "t".repeat(48),
-    recovered: false,
-  });
-  assert.match(page.document.getElementById("p-meta").textContent, /Client 2/);
-});
-
-test("performer page: the leave button ignores a second tap once exited", () => {
-  const page = loadPage("performer.js");
-  const events = page.sandbox.PNDS.events;
-
-  deliver(page.socket, page.sandbox, events.joined, {
-    id: 1,
-    token: "t".repeat(48),
-    recovered: false,
-  });
-
-  click(page.document.getElementById("b-leave"));
-  click(page.document.getElementById("b-leave"));
-
-  assert.equal(
-    page.socket.emitted.filter(([event]) => event === events.leave).length,
-    1,
-  );
-  assert.equal(
-    page.socket.closes,
-    0,
-    "nothing closed — no disconnect has arrived",
-  );
-});
-
-// ------------------------------------------------------------
-// Monitor page — the site-level local event line (issue #10)
-// ------------------------------------------------------------
-
-test("monitor page: the local panel logs both deletions (exit, removal) under the cards", () => {
-  const page = loadPage("monitor.js");
-
-  const state = sampleState();
-
-  state.local.events = [
-    { type: "left", client: 2, at: 1, agoMs: 3000 },
-    { type: "removed", client: 3, at: 2, agoMs: 2000 },
-  ];
-  deliver(page.socket, page.sandbox, page.sandbox.PNDS.events.state, state);
-
-  const localCards = page.document.getElementById("local-cards");
-  const line = localCards.children[localCards.children.length - 1];
-
-  assert.ok(line.classList.contains("site-events"));
-  assert.equal(
-    line.textContent,
-    "client 3 移除（monitor） 2 秒前 · client 2 退出（performer） 3 秒前",
-  );
-
-  // English table: same wire events, reworded live. The re-render
-  // rebuilds the line — grab it fresh.
-  for (const handler of page.messageListeners) {
-    handler(LOCALE_MESSAGE("en"));
-  }
-
-  const lineEn = localCards.children[localCards.children.length - 1];
-
-  assert.equal(
-    lineEn.textContent,
-    "client 3 removed 2s ago · client 2 left 3s ago",
-  );
-});
-
-// ------------------------------------------------------------
-// Monitor page — performer removal「x」(issue #13)
-// ------------------------------------------------------------
-
-test("monitor page: every performer card carries an「x」— click emits remove with the id", () => {
-  const page = loadPage("monitor.js");
-  const events = page.sandbox.PNDS.events;
-
-  // One ONLINE card (client 1) and one DISCONNECTED card (client 2):
-  // the「x」belongs on both — a dead card is removable too.
-  const state = sampleState();
-
-  state.local.clients["2"] = {
-    ...state.local.clients["1"],
-    connected: false,
-    status: "red",
-  };
-  deliver(page.socket, page.sandbox, events.state, state);
-
-  const localCards = page.document.getElementById("local-cards");
-
-  assert.equal(localCards.children.length, 2);
-
-  for (const card of localCards.children) {
-    const head = card.children[0];
-    const x = head.children[head.children.length - 1];
-
-    assert.equal(x.tagName, "button", "the corner control is a button");
-    assert.equal(
-      x.textContent,
-      "×",
-      "icon-only — the word lives in the aria-label",
-    );
-    assert.equal(x.attributes["aria-label"], "移除");
-  }
-
-  // Single tap, no confirmation: both cards' x send the remove command
-  // straight to the server, keyed by the numeric id. (JSON compare —
-  // the payload object is created inside the vm realm.)
-  click(localCards.children[0].children[0].children[3]);
-  click(localCards.children[1].children[0].children[3]);
-
-  assert.equal(
-    JSON.stringify(
-      page.socket.emitted.filter(([event]) => event === events.remove),
-    ),
-    JSON.stringify([
-      ["remove", { id: 1 }],
-      ["remove", { id: 2 }],
-    ]),
-  );
-
-  // English table re-words the aria-label live (a re-render rebuilds
-  // the cards — grab fresh).
-  for (const handler of page.messageListeners) {
-    handler(LOCALE_MESSAGE("en"));
-  }
-
-  const fresh = page.document.getElementById("local-cards").children[0];
-
-  assert.equal(
-    fresh.children[0].children[3].attributes["aria-label"],
-    "Remove",
-  );
-});
-
-// ------------------------------------------------------------
-// Performer page — removed by the monitor (issue #13)
-// ------------------------------------------------------------
-
-test("performer page: removed by the monitor — removed cover, no auto-rejoin, cover tap rejoins", () => {
-  const page = loadPage("performer.js");
-  const events = page.sandbox.PNDS.events;
-
-  deliver(page.socket, page.sandbox, "connect");
-  deliver(page.socket, page.sandbox, events.joined, {
-    id: 1,
-    token: "t".repeat(48),
-    recovered: false,
-  });
-
-  // The monitor tapped this card's「x」: the server deleted the client
-  // and the notice arrives ahead of the kick.
-  deliver(page.socket, page.sandbox, events.removed);
-
-  const cover = page.document.getElementById("left-cover");
-
-  assert.ok(!cover.classList.contains("hidden"), "the cover shows");
-  assert.equal(
-    page.document.getElementById("left-title").textContent,
-    "已被移出检测 · Removed from testing",
-    "worded as a removal, not a voluntary exit",
-  );
-  assert.ok(
-    page.document.getElementById("perf").classList.contains("hidden"),
-    "the dots are gone",
-  );
-
-  // The kick (the server disconnects right after the notice): any
-  // disconnect while exited closes for good — no auto-reconnect.
-  deliver(page.socket, page.sandbox, "disconnect");
-
-  assert.equal(page.socket.closes, 1);
-
-  deliver(page.socket, page.sandbox, "connect");
-
-  assert.equal(
-    page.socket.emitted.filter(([event]) => event === events.join).length,
-    1,
-    "no join while removed",
-  );
-
-  // The whole cover is the rejoin button — same token, which the
-  // server no longer knows: a deliberate fresh client.
-  click(cover);
-
-  assert.equal(page.socket.opens, 1);
-
-  deliver(page.socket, page.sandbox, "connect");
-
-  const joins = page.socket.emitted.filter(([event]) => event === events.join);
-
-  assert.equal(joins.length, 2);
-  assert.equal(joins[1][1].token, "t".repeat(48));
-});
-
-test("instrument monitor: live snapshots and locale changes keep the focused remove button", () => {
-  const page = loadPage("monitor.js");
-  const events = page.sandbox.PNDS.events;
-  const state = sampleState();
-  deliver(page.socket, page.sandbox, events.state, state);
-  const cards = page.document.getElementById("local-cards");
-  const card = cards.children[0];
-  const remove = card.children[0].children[3];
-  remove.focus();
-  state.local.clients["1"].status = "red";
-  state.local.clients["1"].connected = false;
-  deliver(page.socket, page.sandbox, events.state, state);
-  assert.equal(cards.children[0], card);
-  assert.equal(card.children[0].children[3], remove);
-  assert.equal(page.document.activeElement, remove);
-  assert.equal(card.children[0].children[2].textContent, "离线");
-  for (const fn of page.messageListeners)
-    fn({ data: { type: "pnds:locale", version: 1, locale: "en" } });
-  assert.equal(remove.attributes["aria-label"], "Remove");
-  assert.equal(page.document.activeElement, remove);
-  click(remove);
-  assert.deepEqual(
-    JSON.parse(
-      JSON.stringify(
-        page.socket.emitted.filter(([event]) => event === events.remove),
-      ),
-    ),
-    [[events.remove, { id: 1 }]],
-  );
-  delete state.local.clients["1"];
-  state.local.performers = 0;
-  deliver(page.socket, page.sandbox, events.state, state);
-  assert.equal(card.parentNode, null);
-  assert.equal(
-    page.document.activeElement,
-    page.document.getElementById("local-title"),
-  );
-});
-
-test("instrument monitor: online site count excludes stale offline peers without dropping their records", () => {
-  const page = loadPage("monitor.js");
-  const state = sampleState();
-  const events = page.sandbox.PNDS.events;
-  deliver(page.socket, page.sandbox, events.state, state);
-  assert.equal(page.document.getElementById("site-count").textContent, "02");
-  state.leg.peers["site-b"].connected = false;
-  state.leg.peers["site-b"].status = "red";
-  deliver(page.socket, page.sandbox, events.state, state);
-  assert.equal(page.document.getElementById("site-count").textContent, "01");
-  assert.equal(page.document.getElementById("cards").children.length, 2);
-  assert.equal(
-    page.document.getElementById("f-token").value,
-    "",
-    "state must not fill tokens from public activeConfig",
-  );
-});
-
-test("instrument page: Brutal geometry follows the existing per-page theme hook", () => {
-  const html = fs.readFileSync(path.join(PUBLIC_DIR, "index.html"), "utf8");
-  const options = html.match(
-    /window\.PNDS_THEME_OPTIONS = \{[\s\S]*?\n        \};/,
-  )[0];
-  const attributes = {};
-  const listeners = [];
-  const sandbox = {
-    document: {
-      documentElement: {
-        style: { setProperty() {} },
-        setAttribute: (key, value) => {
-          attributes[key] = value;
-        },
-      },
-    },
-    location: { search: "?theme=brutal" },
-    addEventListener: (event, fn) => listeners.push(fn),
-  };
-  sandbox.self = sandbox;
-  sandbox.window = sandbox;
-  const context = vm.createContext(sandbox);
-  vm.runInContext(options, context);
-  vm.runInContext(
-    fs.readFileSync(path.join(ROOT_DIR, "lib/theme-follow.js"), "utf8"),
-    context,
-  );
-  assert.equal(attributes["data-utility-theme"], "brutal");
-  listeners[0]({
-    data: {
-      type: "pnds:theme",
-      version: 1,
-      theme: "stage",
-      palette: { card: "#16181f" },
-    },
-  });
-  assert.equal(attributes["data-utility-theme"], "stage");
-  listeners[0]({ data: { type: "other", theme: "brutal" } });
-  assert.equal(attributes["data-utility-theme"], "stage");
-});
-
-test("instrument phone: device number follows identity and Rejoin uses a native button", () => {
-  const page = loadPage("performer.js");
-  const P = page.sandbox.PNDS;
-  assert.equal(page.document.getElementById("p-id").textContent, "—");
-  deliver(page.socket, page.sandbox, P.events.joined, { id: 7, token: "t7" });
-  assert.equal(page.document.getElementById("p-id").textContent, "07");
-  deliver(page.socket, page.sandbox, "disconnect");
-  assert.equal(page.document.getElementById("p-id").textContent, "—");
-  assert.match(
-    page.document.getElementById("app").innerHTML,
-    /<button type="button" class="left-cover hidden" id="left-cover">/,
-  );
+test("observer disconnect keeps locations and selection but readings stay unconfirmed until fresh state", t => {
+  const p = fixture(t), data = sample(); p.state(data); button(p, "北京大兴").click(); input(p, "f-node", "editing");
+  const before = positions(p), mark = button(p, "北京大兴", ".map-mark");
+  p.deliver("disconnect");
+  assert.match(p.get("banner-title").textContent, /诊断数据连接中断/); assert.equal(p.get("banner").classList.contains("st-gray"), true);
+  assert.equal(p.active(), "北京大兴"); assert.equal(p.get("detail-p50").textContent, "—"); assert.match(p.get("selected-summary").textContent, /待确认/); assert.deepEqual(positions(p), before); assert.equal(button(p, "北京大兴", ".map-mark"), mark);
+  for (const row of p.d.querySelectorAll("tr[data-row]")) assert.equal(row.children[2].textContent, "—");
+  p.deliver("connect"); assert.match(p.get("banner-title").textContent, /诊断数据连接中断/); assert.equal(p.get("detail-p50").textContent, "—"); assert.equal(p.get("b-connect").disabled, true);
+  p.state(data); assert.match(p.get("banner-title").textContent, /公网链路稳定/); assert.equal(p.get("detail-p50").textContent, "15 ms"); assert.equal(p.active(), "北京大兴"); assert.equal(p.get("f-node").value, "editing"); assert.equal(p.get("b-connect").disabled, false); assert.deepEqual(positions(p), before);
 });

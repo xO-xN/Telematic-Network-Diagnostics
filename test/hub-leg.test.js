@@ -17,6 +17,8 @@ const {
   summarizeWindow,
   HubLeg,
   WARMUP_SAMPLES,
+  normalizeLocation,
+  normalizeNetwork,
 } = require("../lib/hub-leg");
 
 // ------------------------------------------------------------
@@ -579,47 +581,14 @@ test("HubLeg: announces own stats into the room while connected", async (t) => {
   assert.equal(body.connected, true);
   assert.equal(typeof body.status, "string");
   assert.equal(typeof body.summary.rttP50, "number");
-  assert.deepEqual(body.local, null, "no local-leg data until #5 wires it");
+  assert.equal(Object.hasOwn(body, "local"), false, "local legs are not measured or announced");
+  assert.deepEqual(body.network, normalizeNetwork(null));
 
   // The warm-up announces (null numbers) are also legitimate bodies.
   const first = socket.sent.find(isAnnounce)[1];
 
   assert.equal(first.type, "tnd-stats");
   assert.ok(first.summary, "warm-up announce still carries a summary");
-});
-
-test("HubLeg: the local-leg summary comes from the injected getter (#5's plug point)", async (t) => {
-  const socket = new FakeSocket({ echoLatencyMs: 0 });
-  const leg = makeLeg(socket, {
-    announceIntervalMs: 5,
-    localSummary: () => ({ status: "yellow", p50: 8.5, performers: 4 }),
-  });
-
-  t.after(() => leg.stop());
-
-  leg.start();
-  socket.deliver("connect");
-
-  await waitFor(
-    () => socket.sent.some(([event]) => event === "relay"),
-    1000,
-    "expected an announce",
-  );
-
-  const announce = socket.sent.find(([event]) => event === "relay");
-
-  assert.deepEqual(announce[1].local, {
-    status: "yellow",
-    p50: 8.5,
-    performers: 4,
-  });
-
-  // The own snapshot carries the same values (read live, not frozen).
-  assert.deepEqual(leg.snapshot().local, {
-    status: "yellow",
-    p50: 8.5,
-    performers: 4,
-  });
 });
 
 test("HubLeg: relayed peer stats land in the roster; foreign types ignored", (t) => {
@@ -646,17 +615,9 @@ test("HubLeg: relayed peer stats land in the roster; foreign types ignored", (t)
   assert.deepEqual(snapshot.peers["site-b"].reasonParams, ["15.0", "10"],
     "the relayed params ride along for the monitor's templates");
   assert.equal(snapshot.peers["site-b"].summary.rttP50, 41);
-  assert.deepEqual(snapshot.peers["site-b"].local, {
-    status: "green",
-    p50: 3.5,
-    performers: 3,
-  });
+  assert.equal(Object.hasOwn(snapshot.peers["site-b"], "local"), false);
   assert.equal(snapshot.peers["site-b"].connected, true);
-  assert.deepEqual(snapshot.peers["site-c"].local, {
-    status: null,
-    p50: null,
-    performers: 0,
-  });
+  assert.equal(Object.hasOwn(snapshot.peers["site-c"], "local"), false);
   assert.equal(snapshot.peers["site-x"], undefined, "foreign relay types are ignored");
 
   leg.stop();
@@ -693,4 +654,88 @@ test("HubLeg: a silent peer goes offline, then is pruned from the roster", (t) =
   );
 
   leg.stop();
+});
+
+test("location validation accepts the equator/prime meridian and rejects malformed coordinates", () => {
+  assert.deepEqual(normalizeLocation({label:"  Greenwich  ",latitude:0,longitude:0},"manual"), {
+    label:"Greenwich",latitude:0,longitude:0,source:"manual",
+  });
+  for (const value of [null,[],{latitude:"40",longitude:116},{latitude:91,longitude:0},{latitude:0,longitude:181},{latitude:NaN,longitude:0},{latitude:0,longitude:Infinity}]) {
+    assert.equal(normalizeLocation(value),null);
+  }
+  assert.equal(normalizeNetwork({ip:"<script>bad</script>"}).ip,null);
+});
+
+test("HubLeg: location metadata is optional; old HUB remains usable without invented coordinates", t => {
+  const socket=new FakeSocket();
+  const leg=makeLeg(socket);
+  t.after(()=>leg.stop());
+  leg.start();socket.deliver("connect");socket.deliver("welcome",{room:"default",node:"site-a",hubTime:1});
+  assert.deepEqual(leg.snapshot().network,normalizeNetwork(null));
+  socket.deliver("relay",statsBodyFrom("old-peer"));
+  assert.deepEqual(leg.snapshot().peers["old-peer"].network,normalizeNetwork(null));
+});
+
+test("HubLeg: HUB metadata updates independently; manual correction wins and is re-sent on reconnect", t => {
+  const socket=new FakeSocket();let changes=0;
+  const leg=makeLeg(socket,{onChange:()=>changes++});
+  t.after(()=>leg.stop());
+  leg.start();socket.deliver("connect");
+  const automatic={label:"Beijing",latitude:39.9,longitude:116.4,source:"ip",provider:"ipapi.is"};
+  const hubLocation={label:"Nanjing",latitude:32.04,longitude:118.77,source:"configured"};
+  socket.deliver("welcome",{network:{ip:"8.8.4.4",location:automatic,hubLocation,manualLocationSupported:true}});
+  assert.equal(leg.snapshot().network.ip,"8.8.4.4");
+  assert.deepEqual(leg.snapshot().network.hubLocation,hubLocation);
+  assert.ok(changes>=2);
+  assert.equal(leg.setLocation({label:"Xicheng",latitude:39.91,longitude:116.36}),true);
+  socket.deliver("network",{location:automatic,hubLocation,manualLocationSupported:true});
+  assert.equal(leg.snapshot().network.location.source,"manual");
+  assert.equal(leg.snapshot().network.location.label,"Xicheng");
+  leg.announceStats();
+  const announced=socket.sent.filter(([e])=>e==="relay").at(-1)[1];
+  assert.equal(announced.network.location.label,"Xicheng");
+  assert.equal(leg.setLocation({latitude:200,longitude:1}),false);
+  assert.equal(leg.snapshot().network.location.label,"Xicheng");
+  socket.deliver("disconnect","transport close");socket.deliver("connect");
+  assert.equal(socket.sent.filter(([e])=>e==="location").at(-1)[1].label,"Xicheng");
+  assert.equal(leg.snapshot().network.ip,null,"new connection does not reuse old exit IP");
+  assert.equal(leg.setLocation(null),true);
+  socket.deliver("network",{location:automatic,hubLocation,manualLocationSupported:true});
+  assert.deepEqual(leg.snapshot().network.location,automatic);
+});
+
+test("HubLeg: local HUB outage makes remote state unknown and retains its last position", t => {
+  let clock=100000;
+  const socket=new FakeSocket();const leg=makeLeg(socket,{now:()=>clock});
+  t.after(()=>leg.stop());leg.start();socket.deliver("connect");
+  const location={label:"Wuhan",latitude:30.6,longitude:114.3,source:"ip"};
+  socket.deliver("relay",statsBodyFrom("remote",{network:{location}}));
+  socket.deliver("disconnect","transport close");clock+=60000;
+  const peer=leg.snapshot().peers.remote;
+  assert.equal(peer.unknown,true);assert.equal(peer.status,"gray");assert.equal(peer.connected,false);
+  assert.equal(peer.summary,null);assert.deepEqual(peer.network.location,location);
+  socket.deliver("relay",statsBodyFrom("late"));
+  assert.equal(leg.snapshot().peers.late,undefined,"late frames from a dead connection cannot revive peers");
+});
+
+test("HubLeg: stale remote readings disappear, its location is retained, invalid telemetry is normalized", t => {
+  let clock=100000;const socket=new FakeSocket();const leg=makeLeg(socket,{now:()=>clock});
+  t.after(()=>leg.stop());leg.start();socket.deliver("connect");
+  const location={label:"Daxing",latitude:39.73,longitude:116.34,source:"manual"};
+  socket.deliver("relay",statsBodyFrom("remote",{network:{location},summary:{rttP50:NaN,iqrMs:-1,lossRate:0}}));
+  assert.equal(leg.snapshot().peers.remote.summary.rttP50,null);
+  clock+=5001;const peer=leg.snapshot().peers.remote;
+  assert.equal(peer.unknown,false);assert.equal(peer.status,"red");assert.equal(peer.summary,null);
+  assert.deepEqual(peer.network.location,location);
+});
+
+test("HubLeg: rolling probe storage is bounded by the measurement window", t => {
+  let clock=100000;const socket=new FakeSocket();const leg=makeLeg(socket,{now:()=>clock});
+  t.after(()=>leg.stop());
+  leg.start();socket.deliver("connect");
+  leg.samples=[{at:clock-15001,rtt:999},{at:clock,rtt:25}];
+  leg.losses=[{at:clock-15001}];leg.reconnects=[{at:clock-15001}];
+  const own=leg.ownSnapshot();
+  assert.equal(leg.samples.length,1);assert.equal(leg.losses.length,0);assert.equal(leg.reconnects.length,0);
+  assert.equal(own.summary.rttP50,25);
 });

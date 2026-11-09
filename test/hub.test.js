@@ -17,6 +17,41 @@ const { findFreePort, waitForPort, spawnHub, stopProcess } = require("./helpers"
 
 const HUB_TOKEN = "test-hub-token-0123456789abcdef";
 
+test("hub: network metadata, manual correction and diagnostic stamps work in the demo CLI", { timeout: 5000 }, async (t) => {
+  const port = await findFreePort();
+  const hub = spawnHub(port, { token: HUB_TOKEN, extraEnv: {
+    HUB_GEO_API_KEY: "", HUB_TRUST_PROXY: "", HUB_LOCATION_LABEL: "Deployment fixture",
+    HUB_LOCATION_LATITUDE: "0", HUB_LOCATION_LONGITUDE: "0",
+  } });
+  t.after(() => stopProcess(hub));
+  await waitForPort(port);
+  const url = `http://127.0.0.1:${port}`;
+  const a = await connectNode(url, { token: HUB_TOKEN, node: "a" });
+  const b = await connectNode(url, { token: HUB_TOKEN, node: "b" });
+  t.after(() => { a.socket.close(); b.socket.close(); });
+  assert.deepEqual(a.welcome.network, {
+    ip: null, location: null, manualLocationSupported: true,
+    hubLocation: { label: "Deployment fixture", latitude: 0, longitude: 0, source: "configured" },
+  });
+  const changed = nextEvent(a.socket, "network", 1000);
+  const result = await new Promise((resolve) => a.socket.emit("location", {
+    label: "Actual venue", latitude: 0, longitude: 0, source: "configured",
+  }, resolve));
+  assert.deepEqual(result, { ok: true });
+  assert.equal((await changed).location.source, "manual");
+  const relayed = nextRelay(b.socket, 1000);
+  a.socket.emit("relay", { type: "tnd-stats", network: { ip: "8.8.8.8" } });
+  const body = await relayed;
+  assert.equal(body.network.ip, null);
+  assert.equal(body.network.location.label, "Actual venue");
+  const custom = nextRelay(b.socket, 1000);
+  a.socket.emit("relay", { type: "other", network: "opaque" });
+  assert.equal((await custom).network, "opaque");
+  const cleared = nextEvent(a.socket, "network", 1000);
+  await new Promise((resolve) => a.socket.emit("location", null, resolve));
+  assert.equal((await cleared).location, null);
+});
+
 // Connects one fake site node; resolves { socket, welcome }. No token
 // default on purpose — an omitted token must reach the hub as omitted
 // (a default would silently test the valid token instead).

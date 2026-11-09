@@ -40,11 +40,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           # The Node line PNDS App bundles as its score-server sidecar
-          # (>=24 <25); the bundle's node_modules are built on the same.
+          # (>=24 <25); source checks and tests use the same runtime.
           node-version: '24.18.1'
 
-      - name: Install production dependencies
-        run: npm ci --omit=dev
+      - name: Install dependencies for source validation
+        run: npm ci
+
+      - name: Check source and diagnostic tests
+        run: |
+          npm run check
+          npm test
 
       - name: Assemble runnable project bundle
         run: |
@@ -120,21 +125,30 @@ jobs:
           draft: true
           files: telematic-network-diagnostics-*.pnds
           body: |
-            A PNDS score project for cross-internet network diagnostics:
-            it measures the hub leg (score server ↔ public hub) and the
-            local legs (performers ↔ score server) of a telematic
-            hub/star setup and shows every site the same flower view.
+            An internet-only PNDS diagnostic: each node measures its outbound
+            connection to the public HUB and shares readings within its room.
+            Geographic/topology views, distinct node colors and linked details
+            keep the display compact. There are no local-device probes or phone
+            joins. RTT is informational; jitter, loss and reconnects determine
+            public-network stability.
+
+            Location metadata requires a compatible HUB. IP coordinates are
+            approximate city estimates, and nodes can correct their own position
+            for the diagnostic session. Unknown positions retain the node list
+            and topology. The HUB marker uses deployment-provided coordinates.
+            Updating this project does not deploy a HUB update.
+
+            仅诊断各节点到公网 HUB 的连接。地理／拓扑视图与下方节点详情联动，
+            颜色区分节点，没有局域网设备探测或手机加入。IP 位置为城市级估计，
+            可在本次会话校正；未知位置保留列表和拓扑。HUB 位置由部署配置提供。
 
             > [!IMPORTANT]
             > Download **`telematic-network-diagnostics-${{ env.VERSION }}.pnds`** from the Assets below.
             >
-            > Do **not** download "Source code (zip)" or "Source code (tar.gz)",
-            > and do not use the green "Code → Download ZIP" button. Those contain
-            > the source only, without the installed Node.js dependencies.
+            > Open the `.pnds` bundle in PNDS App (double-click or ⌘O).
+            > It contains the project assets and exact shared-library references
+            > for PNDS App v1.6.2 or a compatible Host. Source-code archives are
+            > development checkouts, not the installable project bundle.
             >
-            > The `.pnds` bundle installs directly into PNDS App: double-click it
-            > (or press ⌘O in the App). It unpacks the `Telematic Network
-            > Diagnostics` project with exact shared references for PNDS App v1.6.2.
-            >
-            > The relay hub is NOT part of the bundle — it deploys from source
-            > onto a public VPS. See `docs/hub-deployment.md` in the repository.
+            > The relay HUB is deployed separately on a public VPS and is not
+            > part of the bundle. See `docs/hub-deployment.md` in the repository.

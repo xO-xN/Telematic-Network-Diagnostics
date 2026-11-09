@@ -4,59 +4,44 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Telematic Network Diagnostics</title>
-    <link rel="stylesheet" type="text/css" href="style.css" />
+    <link rel="stylesheet" href="style.css" />
     <script src="__config.js"></script>
     <script src="shared.js"></script>
+    <script src="geography.js"></script>
+    <script src="land.js"></script>
     <script>
-      // Single page, two roles: the performer port serves the performer
-      // view, the monitor port serves the operator console. Socket.IO
-      // is served by the performer server; the monitor page loads it
-      // cross-port. No CDN: performances run offline.
+      // Both required runtime ports expose the diagnostic console. No
+      // performer registration or local-network probe runs on either page.
       document.write(
-        '\x3Cscript src="http://' +
-          location.hostname +
-          ":" +
-          window.PNDS.performerPort +
-          '/__pnds/shared/socket.io.js"\x3E\x3C/script\x3E',
+        '\x3Cscript src="http://' + location.hostname + ":" +
+        window.PNDS.performerPort + '/__pnds/shared/socket.io.js"\x3E\x3C/script\x3E',
       );
+      window.PNDS_THEME_OPTIONS = {
+        derive: function (palette) {
+          return window.PNDS_THEME.statusVariables(palette);
+        },
+        onTheme: function (name) {
+          var root = document.documentElement;
+          name = name === "lavender" ? "pond" : name;
+          root.setAttribute("data-utility-theme", name || "pond");
+          root.style.colorScheme = name === "stage" ? "dark" : "light";
+          // Categorical node colors use the App's syntax roles, separate
+          // from link quality. Identity slots remain stable across themes.
+          var colors = {
+            pond: ["#155fc4", "#7e22ce", "#a34200", "#16703a", "#ac2758"],
+            sand: ["#1b50a6", "#7c249c", "#8d3700", "#185e29", "#9d2350"],
+            stage: ["#7dd3e8", "#ccafd9", "#e1bd80", "#a5c8b6", "#f0a3b3"],
+            brutal: ["#004fcc", "#7800bf", "#aa3b00", "#086b2e", "#b0184f"],
+          };
+          (colors[name] || colors.pond).forEach(function (color, index) {
+            root.style.setProperty("--node-" + index, color);
+          });
+        },
+      };
     </script>
+    <script src="/__pnds/theme-follow.js"></script>
+    <script src="/__pnds/locale-follow.js"></script>
+    <script defer src="monitor.js"></script>
   </head>
-
-  <body>
-    <main id="app"></main>
-
-    <script>
-      window.PNDS_IS_MONITOR =
-        window.location.port === String(window.PNDS.monitorPort);
-
-      if (window.PNDS_IS_MONITOR) {
-        // Theme following (spec §5.3) and locale following (network
-        // reference "Locale Following"): the monitor page follows the
-        // App's pushed theme and language. The derive hook maps the App
-        // palette to this page's status colors (WCAG-tuned per surface
-        // by the module itself) — the options global must exist before
-        // the module loads.
-        window.PNDS_THEME_OPTIONS = {
-          onTheme: function (name) {
-            document.documentElement.setAttribute(
-              "data-utility-theme",
-              name || "",
-            );
-          },
-          derive: function (palette) {
-            return window.PNDS_THEME.statusVariables(palette);
-          },
-        };
-        document.write(
-          '\x3Cscript src="/__pnds/theme-follow.js"\x3E\x3C/script\x3E',
-        );
-        document.write(
-          '\x3Cscript src="/__pnds/locale-follow.js"\x3E\x3C/script\x3E',
-        );
-        document.write('\x3Cscript src="monitor.js"\x3E\x3C/script\x3E');
-      } else {
-        document.write('\x3Cscript src="performer.js"\x3E\x3C/script\x3E');
-      }
-    </script>
-  </body>
+  <body><main id="app"></main></body>
 </html>

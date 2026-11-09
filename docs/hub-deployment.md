@@ -4,6 +4,47 @@
 跑起来——快速路径（裸 `ws://IP:端口`）与正式路径（域名 + Caddy +
 `wss://`）各一条。
 
+本仓库的 `npm run hub` 演示入口与独立
+[pnds-hub](https://github.com/xO-xN/pnds-hub) 源码均支持诊断地图元数据。
+本轮源码改动不代表线上服务已更新；部署和重启应在演出间隙由运维者执行。
+
+## 地理位置配置
+
+节点的公网出口 IP 由 hub 从 TCP 连接观察；节点名不用于推断位置。hub 在服务端
+以 JSON POST 查询固定的 `https://api.ipapi.is/`，不阻塞探测和转发。定位服务只收到
+被查询的公网 IP 及可选 key，不收到 Token、节点名、房间或手动校正坐标。
+
+| 环境变量 | 含义 |
+| --- | --- |
+| `HUB_GEO_API_KEY` | 可选的 ipapi.is key，仅留在 hub，不发往工具页面 |
+| `HUB_TRUST_PROXY` | 逗号分隔的可信反代**精确 IP**，缺省为空，不接受 CIDR 或域名 |
+| `HUB_LOCATION_LABEL` | hub 实际部署地点的名称，可选 |
+| `HUB_LOCATION_LATITUDE` | hub 部署纬度 −90…90，须同时提供经度 |
+| `HUB_LOCATION_LONGITUDE` | hub 部署经度 −180…180，须同时提供纬度 |
+
+在 Caddy 连接本机后端的例子中，需显式设置 `HUB_TRUST_PROXY=127.0.0.1`。
+只有 TCP 来源位于该名单时才使用 `X-Forwarded-For` 的最后一项；代理必须将实际
+连接来源追加到末尾，后端端口保持私有。其他转发头与握手中的 IP 字段一律忽略。
+私网、回环和保留地址不提交查询；反代未配置时节点公网位置未知。
+
+IP 估计缓存成功结果 24 小时、失败结果五分钟，最多 512 个地址、两个查询并发、
+64 个地址等待，两秒超时。匿名本地预算为每个 UTC 自然日 30 次，有 key 为 1,000 次；
+遇到 `403`／`429` 后停至 UTC 次日。缓存和预算只在内存中；重启不重置服务商的
+实际额度。数据格式与限额依据见[匿名说明](https://ipapi.is/free-tier.html)和
+[官方 API 文档](https://ipapi.is/developers.html)。
+
+IP 位置是公网出口的近似位置，不保证北京西城／大兴这样的区县或真实场地精度。
+工具可发送 `location` 事件 `{ label?, latitude, longitude }` 手动校正，发送 `null`
+恢复 IP 估计，ack 为 `{ ok: boolean }`。hub 只为当前连接保留手动值；工具重连时
+须重发本机保留的校正。`welcome.network` 和后续 `network` 事件提供
+`{ ip, location, hubLocation, manualLocationSupported: true }`；位置为 `null` 或
+`{ label, latitude, longitude, source }`，source 为 `ip`／`manual`／`configured`，
+IP 估计另带 `provider: "ipapi.is"`。仅 `type: "tnd-stats"` 的 relay 会强制覆盖
+`network` 为当前发送连接的元数据，普通消息继续透明转发。
+
+hub 自身位置只取部署配置；缺失或非法坐标返回 `hubLocation: null`。南京是原型
+示例，不会写死到正式连接。定位失败不影响诊断，位置未知的节点仍能从拓扑与列表查看。
+
 ## hub 是什么
 
 hub 是星型拓扑（hub/star）的中心：一台公网 VPS 上的 Socket.IO 中继。

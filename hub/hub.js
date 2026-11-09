@@ -32,6 +32,12 @@
 const crypto = require("node:crypto");
 const http = require("node:http");
 const { Server } = require("socket.io");
+const {
+  GeoLookup,
+  configuredHubLocation,
+  socketNetwork,
+  trustedProxyList,
+} = require("./network-location");
 
 const HUB_VERSION = "0.1.0";
 const DEFAULT_PORT = 4000;
@@ -94,7 +100,12 @@ function stampedBody(payload, node) {
 // Wires the hub behavior onto a Socket.IO server. Token comes from the
 // environment at call time so tests (and operators) can set it before
 // the handshake arrives.
-function attachHub(io) {
+function attachHub(io, {
+  environment = process.env,
+  geoLookup = new GeoLookup({ apiKey: environment.HUB_GEO_API_KEY }),
+} = {}) {
+  const trustedProxies = trustedProxyList(environment.HUB_TRUST_PROXY);
+  const hubLocation = configuredHubLocation(environment);
   io.use((socket, next) => {
     const auth = socket.handshake.auth || {};
 
@@ -112,18 +123,33 @@ function attachHub(io) {
 
   io.on("connection", (socket) => {
     const { room, node } = socket.data;
+    const network = socketNetwork(socket, {
+      lookup: (ip) => geoLookup.lookup(ip),
+      trustedProxies,
+      hubLocation,
+      onUpdate: (metadata) => socket.emit("network", metadata),
+    });
 
     socket.join(room);
     console.log(`[hub] node "${node}" joined room "${room}"`);
 
-    socket.emit("welcome", { room, node, hubTime: Date.now() });
+    socket.emit("welcome", { room, node, hubTime: Date.now(), network: network.snapshot() });
+    void network.resolve();
+
+    socket.on("location", (location, ack) => {
+      const ok = network.setLocation(location);
+      if (typeof ack === "function") ack({ ok });
+    });
 
     // The one relay seam: any JSON body in, the same body out to every
     // OTHER client in the room, stamped with the hub receive time. The
     // body stays opaque here — its vocabulary belongs to the tool's
     // clients (rolling stats, probes, …), not to the hub.
     socket.on("relay", (payload) => {
-      socket.to(room).emit("relay", stampedBody(payload, node));
+      const body = payload?.type === "tnd-stats"
+        ? { ...payload, network: network.snapshot() }
+        : payload;
+      socket.to(room).emit("relay", stampedBody(body, node));
     });
 
     // The echo seam: any JSON body in, the same body straight back to
@@ -138,6 +164,7 @@ function attachHub(io) {
     });
 
     socket.on("disconnect", (reason) => {
+      network.close();
       console.log(`[hub] node "${node}" left room "${room}" (${reason})`);
     });
   });

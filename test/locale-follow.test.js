@@ -20,9 +20,8 @@ const {
   DEFAULT_LOCALE,
 } = require('../lib/locale-follow')
 
-const { copy, localEvents } = require('../public/shared')
+const { copy } = require('../public/shared')
 const { hubQuality } = require('../lib/hub-leg')
-const { decideStatus } = require('../lib/local-leg')
 
 const ROOT = path.join(__dirname, '..')
 
@@ -206,27 +205,10 @@ test('unsubscribe stops the notifications', () => {
 // Page wiring: locale-follow loads only in the monitor branch
 // ---------------------------------------------------------------------------
 
-test('page wiring: locale-follow loads only in the monitor branch', () => {
+test('page wiring: both diagnostic ports load the locale bridge before the console', () => {
   const html = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8')
-
-  const monitorBranch = html.slice(html.indexOf('PNDS_IS_MONITOR'))
-  assert.match(
-    monitorBranch,
-    /if \(window\.PNDS_IS_MONITOR\) \{[\s\S]*document\.write\(\s*'\\x3Cscript src="\/__pnds\/locale-follow\.js/,
-    'the monitor branch loads the locale bridge',
-  )
-
-  // The module load sits between theme-follow.js and monitor.js.
-  const themeLoad = monitorBranch.indexOf('__pnds/theme-follow.js')
-  const localeLoad = monitorBranch.indexOf('__pnds/locale-follow.js')
-  const monitorLoad = monitorBranch.indexOf('src="monitor.js"')
-  assert.ok(themeLoad !== -1 && localeLoad !== -1 && monitorLoad !== -1)
-  assert.ok(themeLoad < localeLoad, 'locale-follow loads after theme-follow')
-  assert.ok(localeLoad < monitorLoad, 'locale-follow loads before monitor.js')
-
-  // …and the performer branch has no hand in locale following.
-  const performer = fs.readFileSync(path.join(ROOT, 'public', 'performer.js'), 'utf8')
-  assert.doesNotMatch(performer, /pnds:locale|PNDS_LOCALE/)
+  assert.ok(html.indexOf('/__pnds/locale-follow.js') < html.indexOf('src="monitor.js"'))
+  assert.doesNotMatch(html, /performer\.js|PNDS_IS_MONITOR/)
 })
 
 // ---------------------------------------------------------------------------
@@ -293,43 +275,6 @@ test('every reason key the hub leg can emit has copy in both locales', () => {
   }
 })
 
-test('every reason key the local leg can emit has copy in both locales', () => {
-  const good = {
-    disconnected: false,
-    consecutiveTimeouts: 0,
-    burstTimeoutRate: 0,
-    jitterP95: 5,
-    rttP95: 40,
-  }
-
-  // One input per decideStatus rule plus the warm-up key — together
-  // these produce every reason key the wire can carry.
-  const inputs = [
-    good,
-    { ...good, disconnected: true },
-    { ...good, consecutiveTimeouts: 3 },
-    { ...good, burstTimeoutRate: 0.06 },
-    { ...good, jitterP95: 26 },
-    { ...good, rttP95: 101 },
-    { ...good, consecutiveTimeouts: 1 },
-    { ...good, rttP95: 60 },
-  ]
-
-  const emitted = new Set(['warmup'])
-  for (const input of inputs) {
-    emitted.add(decideStatus(input).reason)
-  }
-
-  for (const locale of SUPPORTED_LOCALES) {
-    for (const reason of emitted) {
-      assert.ok(
-        copy[locale].localReasons[reason],
-        `${locale}: missing copy for local reason "${reason}"`,
-      )
-    }
-  }
-})
-
 test('event-log types have copy in both locales', () => {
   const types = [
     'connected',
@@ -337,7 +282,6 @@ test('event-log types have copy in both locales', () => {
     'reconnected',
     'stopped',
     'connect failed',
-    ...Object.values(localEvents),
   ]
 
   for (const type of types) {

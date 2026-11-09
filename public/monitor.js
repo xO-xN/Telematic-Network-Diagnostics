@@ -1,964 +1,380 @@
-// Telematic Network Diagnostics — monitor page (issues #3–#5).
-//
-// The flower view: the WHOLE network's picture, identical on every
-// site's monitor (each node self-reports over the hub room relay).
-// Instrument panel layout shared with Local Diagnostics: verdict and
-// fault attribution above the hub/star diagram and connection settings;
-// per-site readings below, followed by this site's performer cards.
-// The diagram, quality coloring and derived segment sums stay driven by
-// server truth. Hub RTT readings remain neutral: high stable latency does
-// not imply poor quality. Native disclosures hold event history and QR.
-//
-// All copy renders through the shared bilingual tables (shared.js
-// `copy`), picked by the current locale (locale-follow.js follows the
-// App language — the page re-renders live on every language switch;
-// default Chinese, this project's historical UI).
-
-const P = window.PNDS;
-const L = window.PNDS_LOCALE;
-
-const SVG_NS = "http://www.w3.org/2000/svg";
-
-const app = document.getElementById("app");
-
-// The skeleton is built once; every label-carrying node gets an id so
-// render() can re-word the chrome without touching the form inputs (a
-// language switch must never wipe what the operator is typing).
-app.innerHTML = `
-  <div class="brand">
-    <svg viewBox="0 0 28 20" fill="none" aria-hidden="true"><path d="M14 4v12M4 10h20M6 3l16 14M6 17L22 3" stroke="currentColor" stroke-width="1.5"/><circle cx="14" cy="10" r="4" fill="var(--bg)" stroke="currentColor" stroke-width="1.5"/></svg><span>PNDS UTILITY</span>
-  </div>
-  <header><div><h1>Telematic Diagnostics</h1><p class="sub" id="sub-label"></p></div>
-    <div class="activity"><span class="activity-value" id="site-count">00</span><span class="activity-label" id="sites-label"></span></div>
-  </header>
-  <section class="panel network-panel" aria-labelledby="overall-label">
-    <div class="overall st-idle" id="banner">
-      <div class="verdict"><span class="overall-label"><span class="dot on" aria-hidden="true"></span><span id="overall-label"></span></span>
-        <p class="overall-copy" id="banner-copy" role="status"></p></div>
-      <p class="attribution" id="banner-attribution"></p>
-    </div>
-    <div class="top-grid">
-      <div class="star-panel" id="star-panel"><h2 id="network-title"></h2><div id="star"></div><p class="hint" id="star-hint"></p></div>
-      <div id="form-panel"><h2 id="form-title"></h2>
-        <div class="form-grid">
-          <label><span id="l-url"></span><input id="f-url" placeholder="wss://hub.example.com" spellcheck="false" autocapitalize="off" /></label>
-          <label><span id="l-token"></span><input id="f-token" type="password" placeholder="HUB_TOKEN" /></label>
-          <label><span id="l-room"></span><input id="f-room" placeholder="default" spellcheck="false" autocapitalize="off" /><span class="derived-room hidden" id="f-room-derived"></span></label>
-          <label><span id="l-node"></span><input id="f-node" placeholder="site name" /></label>
-        </div>
-        <div class="form-actions"><button type="button" id="b-connect"></button></div>
-        <p class="hint" id="form-hint"></p>
-        <details class="connection-log"><summary id="log-title"></summary><div class="log" id="log"></div></details>
+// Internet diagnostics only. Server snapshots own measurement/quality truth;
+// this page owns presentation, transient hover and the pinned detail selection.
+(() => {
+  const P = window.PNDS, L = window.PNDS_LOCALE, G = window.PNDS_GEOGRAPHY;
+  const app = document.getElementById("app"), SVG_NS = "http://www.w3.org/2000/svg";
+  const el = id => document.getElementById(id);
+  const copy = () => (P.copy[L.current()] || P.copy["zh-CN"]).internet;
+  const tables = () => P.copy[L.current()] || P.copy["zh-CN"];
+  const fmt = (text, values) => text.replace(/\{(\w+)\}/g, (whole, key) => values?.[key] ?? whole);
+  const text = (id, value) => { el(id).textContent = value; };
+  const metric = (value, digits = 0, suffix = "") => Number.isFinite(value) ? value.toFixed(digits) + suffix : "—";
+  const svg = (name, attrs, className) => {
+    const node = document.createElementNS(SVG_NS, name);
+    for (const [key, value] of Object.entries(attrs || {})) node.setAttribute(key, value);
+    if (className) node.setAttribute("class", className);
+    return node;
+  };
+  app.innerHTML = `
+    <div class="brand">PNDS UTILITY</div>
+    <header><div><h1>Telematic Diagnostics</h1><p class="sub" data-copy="sub"></p><p class="hub-address" id="hub-address"></p></div><div class="activity"><span class="activity-value" id="site-count">00</span><span class="activity-label" data-copy="sites"></span></div></header>
+    <section class="panel" aria-labelledby="banner-title">
+      <div class="overall st-idle" id="banner"><div class="verdict"><strong><span class="dot" aria-hidden="true"></span><span id="banner-title"></span></strong><p id="banner-copy" role="status"></p></div><div class="connection-status"><span id="online-count"></span><button type="button" id="retry" hidden data-copy="reconnect"></button></div></div>
+      <div class="map-panel"><div class="map-toolbar"><h2 id="map-title"></h2><div class="view-toggle" id="view-toggle" role="group"><button type="button" data-view="topology" data-copy="topology" aria-pressed="false"></button><button type="button" data-view="geography" data-copy="geography" aria-pressed="true"></button></div></div>
+        <div class="map-stage" id="map-stage"><svg id="map-svg" role="img"><defs><clipPath id="map-clip"><rect id="map-clip-rect"/></clipPath></defs><g clip-path="url(#map-clip)"><g id="land-layer" class="land-layer"></g><g id="edges"></g><g id="hub-layer"></g></g></svg><div id="marks"></div><div id="map-labels"></div><div class="map-empty" id="map-empty" hidden><strong data-copy="emptyMap"></strong><span data-copy="emptyHint"></span></div><div class="map-scale" id="map-scale" hidden><span id="scale-line"></span><span id="scale-value"></span></div></div>
+        <div class="unknown-nodes" id="unknown-nodes" hidden><span data-copy="unknownLocation"></span></div><div class="map-meta"><span data-copy="legend"></span><span id="map-hint"></span></div>
       </div>
-    </div>
-    <div class="site-readings"><div class="section-head"><h2 id="readings-title"></h2><span class="section-note" id="readings-note"></span></div><div id="cards"></div></div>
-  </section>
-  <section class="panel local-panel" id="local-panel" aria-labelledby="local-title">
-    <div class="section-head"><h2><span id="local-title" tabindex="-1"></span> <span class="count" id="local-count"></span></h2><span class="section-note" id="local-note"></span></div>
-    <div class="local-cards" id="local-cards"></div>
-  </section>
-  <footer><p class="hint" id="footer-hint"></p></footer>`;
+      <section class="readings" aria-labelledby="readings-title"><div class="section-head"><h2 id="readings-title" data-copy="readings"></h2><span data-copy="window"></span></div><table><thead><tr><th data-copy="node"></th><th data-copy="status"></th><th data-copy="rtt"></th><th data-copy="jitter"></th><th data-copy="loss"></th></tr></thead><tbody id="node-rows"></tbody></table><p class="fineprint" data-copy="fineprint"></p></section>
+      <details class="node-detail" id="node-detail"><summary><strong id="selected-name"></strong><span id="selected-summary"></span></summary><div class="detail-body"><dl class="detail-grid"><div><dt data-copy="p50"></dt><dd id="detail-p50"></dd></div><div><dt data-copy="p95"></dt><dd id="detail-p95"></dd></div><div><dt data-copy="iqr"></dt><dd id="detail-iqr"></dd></div><div><dt data-copy="lossRate"></dt><dd id="detail-loss"></dd></div><div><dt data-copy="reconnects"></dt><dd id="detail-reconnects"></dd></div><div><dt data-copy="dataSource"></dt><dd id="detail-source"></dd></div><div><dt data-copy="location"></dt><dd id="detail-location"></dd></div><div><dt data-copy="ip"></dt><dd id="detail-ip"></dd></div></dl><p class="detail-reason" id="detail-reason"></p>
+      <details class="location-editor" id="location-editor" hidden><summary data-copy="editLocation"></summary><p class="fineprint" data-copy="locationNote"></p><form id="location-form"><div class="location-fields"><label><span data-copy="locationLabel"></span><input id="location-label" maxlength="96" autocomplete="off"/></label><label><span data-copy="latitude"></span><input id="location-latitude" type="number" min="-90" max="90" step="any" required/></label><label><span data-copy="longitude"></span><input id="location-longitude" type="number" min="-180" max="180" step="any" required/></label></div><div class="form-actions"><button id="location-save" type="submit" data-copy="saveLocation"></button><button id="location-reset" type="button" data-copy="resetLocation"></button></div><p id="location-feedback" class="form-feedback" role="status"></p></form></details></div></details>
+      <details class="disclosure" id="connection"><summary data-copy="connection"></summary><dl class="config-grid"><div><dt data-copy="hub"></dt><dd id="config-hub"></dd></div><div><dt data-copy="formRoom"></dt><dd id="config-room"></dd></div><div><dt data-copy="formNode"></dt><dd id="config-node"></dd></div><div><dt data-copy="location"></dt><dd id="config-hub-location"></dd></div></dl><p class="fineprint" id="app-config-note" data-copy="appConfig" hidden></p><details id="connection-editor"><summary data-copy="formTitle"></summary><form id="connection-form"><div class="form-grid"><label><span data-copy="formUrl"></span><input id="f-url" placeholder="wss://hub.example.com" spellcheck="false" autocapitalize="off"/></label><label><span data-copy="formToken"></span><input id="f-token" type="password" autocomplete="off"/></label><label><span data-copy="formRoom"></span><input id="f-room" spellcheck="false" autocapitalize="off"/><span class="derived-room" id="f-room-derived" hidden></span></label><label><span data-copy="formNode"></span><input id="f-node"/></label></div><div class="form-actions"><button type="submit" id="b-connect"></button></div></form></details></details>
+      <details class="disclosure" id="event-history"><summary data-copy="events"></summary><ol class="event-list" id="event-list"></ol></details>
+    </section>`;
 
-const bannerEl = document.getElementById("banner");
-const bannerCopyEl = document.getElementById("banner-copy");
-const bannerAttributionEl = document.getElementById("banner-attribution");
-const starEl = document.getElementById("star");
-const localCardsEl = document.getElementById("local-cards");
-const performerCards = new Map();
-const localEmpty = el("p", "empty-local");
-const localEvents = el("div", "events-line site-events");
-const localCountEl = document.getElementById("local-count");
-const cardsEl = document.getElementById("cards");
-const urlInput = document.getElementById("f-url");
-const tokenInput = document.getElementById("f-token");
-const roomInput = document.getElementById("f-room");
-const derivedRoomEl = document.getElementById("f-room-derived");
-const nodeInput = document.getElementById("f-node");
-const connectButton = document.getElementById("b-connect");
-const logEl = document.getElementById("log");
-const chromeEls = {
-  sub: document.getElementById("sub-label"),
-  overallLabel: document.getElementById("overall-label"),
-  formTitle: document.getElementById("form-title"),
-  formUrl: document.getElementById("l-url"),
-  formToken: document.getElementById("l-token"),
-  formRoom: document.getElementById("l-room"),
-  formNode: document.getElementById("l-node"),
-  formHint: document.getElementById("form-hint"),
-  starHint: document.getElementById("star-hint"),
-  localTitle: document.getElementById("local-title"),
-  logTitle: document.getElementById("log-title"),
-};
-
-// The copy table of the current locale (Chinese fallback — the table
-// the page rendered before locale following existed).
-function T() {
-  return P.copy[L.current()] || P.copy["zh-CN"];
-}
-
-// Placeholder filling for the copy templates: numeric slots ({0}, {1})
-// read the params array, named slots ({node}) read the params object.
-function fmt(template, params) {
-  return template.replace(/\{(\w+)\}/g, (whole, key) =>
-    params && params[key] !== undefined ? params[key] : whole,
-  );
-}
-
-let state = null;
-let formPrefilled = false;
-// What the auto-start sends: the config loaded at startup, REPLACED by
-// whatever the operator later submits — so a transient socket
-// reconnect can never submit a half-edited form, and never rolls a
-// manual session edit back to the startup values either (issue #15:
-// hand edits hold for the whole session; only the next PAGE LOAD
-// restores the env).
-let autoConfig = null;
-
-const socket = io("http://" + location.hostname + ":" + P.performerPort, {
-  reconnection: true,
-});
-
-socket.on(P.events.state, (data) => {
-  state = data;
-  render();
-});
-
-// The App language switch re-renders the whole console through the new
-// locale's copy table (latest value wins; same value re-pushes change
-// nothing). The form inputs are NOT rebuilt — the operator's typing
-// survives a mid-edit language switch.
-L.subscribe(render);
-
-// Auto-start (zero buttons): whenever the socket (re)connects, submit
-// the STARTUP config if it is usable. The server no-ops an identical
-// config, so page refreshes and socket reconnects never reset the
-// measurement. Runs after the first state broadcast at the latest (the
-// env prefill needs it), so this also fires from prefillForm().
-socket.on("connect", () => {
-  if (autoConfig) {
-    socket.emit(P.events.hubConfig, autoConfig);
+  // Geographic land is shipped locally, not fetched or tiled at runtime.
+  for (const shift of [-960, 0, 960]) {
+    const path = svg("path", { d: window.PNDS_LAND_PATH, transform: `translate(${shift} 0)` }, "land");
+    el("land-layer").append(path);
   }
-});
-
-connectButton.addEventListener("click", () => submitConfig(true));
-
-// ------------------------------------------------------------
-// Form: localStorage persistence + env prefill
-// ------------------------------------------------------------
-
-function loadSavedConfig() {
-  try {
-    const parsed = JSON.parse(
-      localStorage.getItem(P.storageKeys.hubConfig) || "null",
-    );
-
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-// The App-present prefill (issue #15): env values win FIELD BY FIELD
-// over the saved form — the App's node settings are the live
-// configuration, and an old browser memory must never silently mask
-// them; the saved values fill only what the env leaves empty (the
-// priority inversion of #3's "localStorage wins" dual-channel shape).
-// A manual edit still saves to localStorage, and the next page load
-// lets the env override it again — hand edits are session-only by
-// construction, with no extra state anywhere.
-//
-// Runs ONCE per page load (see render): the state broadcast ticks at
-// 1 Hz and must never clobber what the operator is typing.
-function prefillForm() {
-  if (formPrefilled) {
-    return;
-  }
-
-  formPrefilled = true;
-
-  const saved = loadSavedConfig();
-  const env = (state && state.env) || {};
-  const config = {
-    url: env.hubUrl || saved.url || "",
-    token: env.hubToken || saved.token || "",
-    room: env.hubRoom || saved.room || "",
-    nodeId: env.nodeId || saved.nodeId || "",
+  let state = null, nodes = [], selected = null, hovered = null, focused = null;
+  let view = "geography", previewing = false, previousOpen = false, layoutKey = "";
+  let formPrefilled = false, locationDirty = false, locationKey = "", locationPending = false;
+  let observationLost = false;
+  let feedbackKey = "", configurationKey = "", locationRequest = 0, locationTimer = null;
+  const records = new Map(), colorSlots = new Map();
+  let plotted = [];
+  const activeId = () => hovered || focused || selected;
+  const socket = io("http://" + location.hostname + ":" + P.performerPort, { reconnection: true });
+  const ownName = () => state?.activeConfig?.nodeId || state?.env?.nodeId || copy().self;
+  const placeName = place => place.label || place.latitude.toFixed(3) + ", " + place.longitude.toFixed(3);
+  const locationOf = node => G.validLocation(node.network?.location) ? node.network.location : null;
+  const hubLocation = () => G.validLocation(state?.leg?.network?.hubLocation) ? state.leg.network.hubLocation : null;
+  const reason = node => {
+    if (observationLost) return copy().observationRecover;
+    if (node.unknown) return copy().unknownReason;
+    if (node.stale) return copy().staleReason;
+    const value = tables().hubReasons[node.reason];
+    return value ? fmt(value, node.reasonParams) : node.reason || "";
   };
-
-  urlInput.value = config.url;
-  tokenInput.value = config.token;
-  roomInput.value = config.room;
-  nodeInput.value = config.nodeId;
-
-  applyRoomDisplay(env.hubRoom || "");
-
-  if (config.url && config.token) {
-    autoConfig = config;
+  function isConnecting() {
+    const leg = state?.leg;
+    return Boolean(leg && !leg.connected && !leg.everConnected && !leg.events?.some(event => event.type === "connect failed"));
+  }
+  function nodeTitle(node) {
+    return node.unknown ? copy().unknownRemote : node.stale ? copy().stale : copy().quality[node.status] || copy().quality.gray;
+  }
+  function nodeList() {
+    const leg = state?.leg;
+    if (!state) return [];
+    const own = { ...(leg || {}), id: ownName(), self: true, status: leg?.status || "idle" };
+    const peers = Object.entries(leg?.peers || {}).sort(([a], [b]) => a.localeCompare(b)).map(([id, peer]) => ({ ...peer, id, self: false, unknown: peer.unknown || !leg.connected }));
+    return [own, ...peers].map(node => ({ ...node, connected: node.connected && !observationLost, unknown: node.unknown || observationLost, status: node.unknown || observationLost ? "gray" : node.status, readable: Boolean(!observationLost && node.connected && !node.unknown && !node.stale && node.status !== "gray") }));
+  }
+  function slot(id) {
+    if (!colorSlots.has(id)) {
+      let index = G.hash(id) % 5;
+      const used = new Set(colorSlots.values());
+      if (used.size < 5) while (used.has(index)) index = (index + 1) % 5;
+      colorSlots.set(id, index);
+    }
+    return `var(--node-${colorSlots.get(id)})`;
+  }
+  function loadSavedConfig() {
+    try { const value = JSON.parse(localStorage.getItem(P.storageKeys.hubConfig) || "null"); return value && typeof value === "object" ? value : {}; }
+    catch { return {}; }
+  }
+  function prefillForm() {
+    if (formPrefilled || !state) return;
+    formPrefilled = true;
+    const saved = loadSavedConfig(), env = state.env || {}, active = state.activeConfig || {};
+    const config = { url: env.hubUrl || active.url || saved.url || "", token: env.hubToken || active.token || saved.token || "", room: env.hubRoom || active.room || saved.room || "", nodeId: env.nodeId || active.nodeId || saved.nodeId || "" };
+    for (const [key, field] of [["url", "url"], ["token", "token"], ["room", "room"], ["nodeId", "node"]]) el("f-" + field).value = config[key];
+    el("f-room").hidden = Boolean(env.hubRoom);
+    el("f-room-derived").hidden = !env.hubRoom;
+    text("f-room-derived", env.hubRoom || "");
+    // The server already starts App-provided config. Only a first,
+    // unconfigured standalone session may use its saved browser config.
+    if (socket.connected && !observationLost && !state.configured && !env.hubUrl && config.url && config.token) socket.emit(P.events.hubConfig, config);
+  }
+  function formConfig() { return { url: el("f-url").value.trim(), token: el("f-token").value.trim(), room: el("f-room").value.trim(), nodeId: el("f-node").value.trim() }; }
+  function formMatches(config) {
+    if (!config) return false;
+    const value = formConfig();
+    return value.url === config.url && value.token === config.token && (value.room === config.room || !value.room && config.room === P.defaultRoom) && (value.nodeId === config.nodeId || !value.nodeId);
+  }
+  function renderConnect() {
+    const connected = state?.leg?.connected, clean = formMatches(state?.activeConfig);
+    text("b-connect", connected && clean && !observationLost ? copy().connected : isConnecting() ? copy().connectingButton : state?.configured ? copy().reconnect : copy().connect);
+    el("b-connect").disabled = Boolean(!socket.connected || observationLost || connected && clean || isConnecting());
+    el("retry").hidden = !state?.configured || Boolean(connected);
+    el("retry").disabled = !socket.connected || observationLost || isConnecting();
+    text("retry", isConnecting() ? copy().connectingButton : copy().reconnect);
+  }
+  function makeNode(node) {
+    const row = document.createElement("tr"); row.dataset.row = node.id;
+    const nameCell = document.createElement("td"), name = document.createElement("button");
+    name.type = "button"; name.className = "node-name"; name.dataset.node = node.id;
+    const swatch = document.createElement("span"); swatch.className = "identity-dot"; swatch.setAttribute("aria-hidden", "true");
+    const nameText = document.createElement("span"), badge = document.createElement("small");
+    name.append(swatch, nameText, badge); nameCell.append(name); row.append(nameCell);
+    const status = document.createElement("td"), statusWrap = document.createElement("span"); statusWrap.className = "node-status";
+    const statusDot = document.createElement("span"); statusDot.className = "dot"; statusDot.setAttribute("aria-hidden", "true");
+    const statusText = document.createElement("span"), age = document.createElement("small"); age.className = "node-age";
+    statusWrap.append(statusDot, statusText); status.append(statusWrap, age); row.append(status);
+    const readings = [0, 1, 2].map(() => { const cell = document.createElement("td"); row.append(cell); return cell; });
+    el("node-rows").append(row);
+    const mark = document.createElement("button"); mark.type = "button"; mark.dataset.node = node.id;
+    const point = document.createElement("span"); point.className = "point"; point.setAttribute("aria-hidden", "true");
+    const unknownName = document.createElement("span"); unknownName.className = "unknown-name";
+    mark.append(point, unknownName);
+    const edge = svg("path", {}, "edge"); edge.dataset.node = node.id; el("edges").append(edge);
+    const tag = document.createElement("span"); tag.className = "self-tag"; el("map-labels").append(tag);
+    for (const button of [name, mark]) {
+      button.addEventListener("click", event => {
+        const hit = button === mark && mark.classList.contains("map-mark") && event.detail > 0 ? nearest(event) : null;
+        selected = hit?.id || node.id; hovered = null; focused = null; previewing = false; el("node-detail").open = true; syncInteraction();
+      });
+      button.addEventListener("focus", () => { focused = node.id; syncInteraction(); });
+      button.addEventListener("blur", () => { if (focused === node.id) { focused = null; syncInteraction(); } });
+      button.addEventListener("pointerenter", event => { if (event.pointerType !== "touch" && (button === name || mark.classList.contains("unknown-mark"))) setHover(node.id); });
+      button.addEventListener("pointerleave", () => { if (button === name || mark.classList.contains("unknown-mark")) setHover(null); });
+    }
+    return { row, name, nameText, badge, status, statusText, age, readings, mark, unknownName, edge, tag };
+  }
+  function reconcileNodes() {
+    const ids = new Set(nodes.map(node => node.id));
+    for (const [id, record] of records) {
+      if (ids.has(id)) continue;
+      const wasFocused = record.row.contains(document.activeElement) || record.mark === document.activeElement;
+      for (const part of [record.row, record.mark, record.edge, record.tag]) part.remove();
+      records.delete(id);
+      if (hovered === id) hovered = null;
+      if (focused === id) focused = null;
+      if (wasFocused) records.get(nodes[0]?.id)?.name.focus();
+    }
+    for (const id of colorSlots.keys()) if (!ids.has(id)) colorSlots.delete(id);
+    if (ids.size <= 5) {
+      const used = new Set();
+      for (const [id, index] of colorSlots) {
+        if (used.has(index)) colorSlots.delete(id);
+        else used.add(index);
+      }
+    }
+    // Seed new names in id order without changing surviving unique slots.
+    for (const id of nodes.map(node => node.id).sort()) slot(id);
+    for (const [index, node] of nodes.entries()) {
+      const record = records.get(node.id) || makeNode(node); records.set(node.id, record);
+      const order = el("node-rows").children[index];
+      if (order !== record.row) el("node-rows").insertBefore(record.row, order || null);
+      for (const part of [record.row, record.mark, record.edge, record.tag]) part.style.setProperty("--node-color", slot(node.id));
+      record.nameText.textContent = node.id; record.badge.textContent = node.self ? copy().self : "";
+      P.setStatus(record.status, node.status); record.statusText.textContent = nodeTitle(node);
+      record.age.textContent = node.stale ? fmt(copy().staleAge, [Math.max(1, Math.floor((node.agoMs || 0) / 1000))]) : "";
+      record.readings[0].textContent = node.readable ? metric(node.summary?.rttP50) : "—";
+      record.readings[1].textContent = node.readable ? metric(node.summary?.iqrMs, 1) : "—";
+      record.readings[2].textContent = node.readable ? metric(Number.isFinite(node.summary?.lossRate) ? node.summary.lossRate * 100 : null, 1) : "—";
+      const description = node.id + (node.self ? " · " + copy().self : "") + " · " + nodeTitle(node);
+      record.name.setAttribute("aria-label", description); record.mark.setAttribute("aria-label", description);
+      record.mark.dataset.unknown = String(Boolean(node.unknown)); record.edge.classList.toggle("offline", !node.connected || node.unknown);
+      record.unknownName.textContent = node.id; record.tag.textContent = copy().self;
+    }
+  }
+  function renderBanner() {
+    const leg = state?.leg, m = copy();
+    let title, explanation, status;
+    if (observationLost) { title = m.observationLost; explanation = m.observationRecover; status = "gray"; }
+    else if (!state?.configured) { title = m.unconfigured; explanation = m.unconfiguredReason; status = "idle"; }
+    else if (isConnecting()) { title = m.connecting; explanation = m.connectingReason; status = "gray"; }
+    else if (!leg?.connected) { title = leg?.reason === "invalidToken" ? m.authFailed : m.disconnected; explanation = reason(nodes[0]); status = "red"; }
+    else {
+      status = state.overall?.status || "gray";
+      title = status === "gray" ? m.sampling : tables().overall[status] || m.sampling;
+      const bad = nodes.find(node => node.id === state.overall?.attributionNodeId);
+      explanation = status === "green" ? m.stableReason : bad ? bad.id + " · " + reason(bad) : m.samplingReason;
+    }
+    P.setStatus(el("banner"), status); text("banner-title", title); text("banner-copy", explanation);
+    const count = nodes.filter(node => node.connected && !node.unknown && !node.stale).length;
+    text("site-count", leg?.connected && !observationLost ? String(count).padStart(2, "0") : "—");
+    text("online-count", leg?.connected && !observationLost ? fmt(m.online, [count, nodes.length]) : fmt(m.known, [nodes.length]));
+  }
+  function renderConnection() {
+    const config = state?.activeConfig || {}, env = state?.env || {}, hub = hubLocation();
+    const address = config.url || env.hubUrl || "—";
+    text("hub-address", copy().hub + " · " + address + (hub?.label ? " · " + hub.label : ""));
+    text("config-hub", address); text("config-room", config.room || env.hubRoom || "—"); text("config-node", ownName());
+    text("config-hub-location", hub ? placeName(hub) + " · " + sourceLabel(hub) : copy().hubUnknown);
+    el("app-config-note").hidden = !env.hubUrl;
+    el("connection-editor").hidden = Boolean(env.hubUrl && env.hubToken && env.hubRoom && env.nodeId);
+    renderConnect();
+  }
+  function ago(milliseconds) {
+    const a = tables().ago, seconds = Math.floor((milliseconds || 0) / 1000);
+    return seconds < 1 ? a.just : seconds < 60 ? seconds + a.seconds : Math.floor(seconds / 60) + a.minutes;
+  }
+  function renderEvents() {
+    const list = el("event-list"), events = state?.leg?.events || [];
+    list.replaceChildren();
+    if (!events.length) { const item = document.createElement("li"); item.textContent = copy().noEvents; list.append(item); }
+    for (const event of events) {
+      const item = document.createElement("li"), time = document.createElement("time"), value = document.createElement("span");
+      time.textContent = ago(event.agoMs);
+      const detail = tables().eventDetails[event.detail] || event.detail || "";
+      value.textContent = (tables().events[event.type] || event.type) + (detail ? " · " + detail : "");
+      item.append(time, value); list.append(item);
+    }
+  }
+  function sourceLabel(location) { return location.source === "manual" ? copy().manualSource : location.source === "configured" ? copy().configuredSource : copy().ipSource; }
+  function updateDetail() {
+    const node = nodes.find(node => node.id === activeId());
+    el("node-detail").hidden = !node;
+    if (!node) return;
+    const place = locationOf(node), m = copy(), summary = node.summary || {};
+    el("node-detail").style.setProperty("--node-color", slot(node.id));
+    text("selected-name", node.id + (node.self ? " · " + m.self : ""));
+    text("selected-summary", node.readable ? "p95 " + metric(summary.rttP95, 0, " ms") + " · " + fmt(m.shortReconnects, [summary.reconnects || 0]) : nodeTitle(node));
+    text("detail-p50", node.readable ? metric(summary.rttP50, 0, " ms") : "—");
+    text("detail-p95", node.readable ? metric(summary.rttP95, 0, " ms") : "—");
+    text("detail-iqr", node.readable ? metric(summary.iqrMs, 1, " ms") : "—");
+    text("detail-loss", node.readable ? metric(Number.isFinite(summary.lossRate) ? summary.lossRate * 100 : null, 1, "%") : "—");
+    text("detail-reconnects", node.readable ? fmt(m.reconnectCount, [summary.reconnects || 0]) : "—");
+    text("detail-source", node.unknown ? m.unknownRemote : node.self ? m.ownMeasurement : fmt(m.reported, [ago(node.agoMs)]));
+    text("detail-location", place ? placeName(place) + " · " + sourceLabel(place) + (!node.connected ? " · " + m.lastLocation : "") : m.unknownLocation);
+    text("detail-ip", node.network?.ip || "—"); text("detail-reason", reason(node));
+    el("location-editor").hidden = !node.self || !state?.configured;
+    if (node.self && !locationDirty) {
+      const key = JSON.stringify(place);
+      if (key !== locationKey) {
+        locationKey = key; el("location-label").value = place?.label || "";
+        el("location-latitude").value = place?.latitude ?? ""; el("location-longitude").value = place?.longitude ?? "";
+      }
+    }
+    text("location-feedback", feedbackKey ? m[feedbackKey] : "");
+  }
+  function syncInteraction() {
+    const temporary = Boolean(hovered || focused), active = activeId();
+    if (temporary && !previewing) { previousOpen = el("node-detail").open; previewing = true; }
+    if (temporary) el("node-detail").open = true;
+    else if (previewing) { el("node-detail").open = previousOpen; previewing = false; }
+    for (const [id, record] of records) {
+      record.row.dataset.active = String(id === active); record.mark.dataset.active = String(id === active);
+      record.edge.classList.toggle("chosen", id === active);
+      record.name.setAttribute("aria-pressed", String(id === selected)); record.mark.setAttribute("aria-pressed", String(id === selected));
+    }
+    el("node-detail").dataset.preview = String(temporary); updateDetail();
+  }
+  function setHover(id) { if (id !== hovered) { hovered = id; syncInteraction(); } }
+  function nearest(event) { const bounds = el("map-stage").getBoundingClientRect(); return G.nearest(plotted, event.clientX - bounds.left, event.clientY - bounds.top); }
+  function layout() {
+    const stage = el("map-stage"), width = stage.clientWidth, height = stage.clientHeight;
+    if (!width || !height) return;
+    const geographic = view === "geography", hub = hubLocation();
+    const key = JSON.stringify([view, width, height, hub, nodes.map(node => [node.id, locationOf(node)])]);
+    if (key === layoutKey) return;
+    layoutKey = key;
+    el("map-svg").setAttribute("viewBox", `0 0 ${width} ${height}`);
+    el("map-clip-rect").setAttribute("width", width); el("map-clip-rect").setAttribute("height", height);
+    const locations = nodes.map(locationOf).filter(Boolean); if (hub) locations.push(hub);
+    const camera = G.fitCamera(locations, width, height);
+    el("land-layer").style.display = geographic && camera ? "" : "none";
+    if (camera) el("land-layer").setAttribute("transform", `translate(${camera.ox} ${camera.oy}) scale(${camera.sx} ${camera.sy})`);
+    const hubPoint = geographic ? hub && camera ? G.position(hub, camera) : null : { x: width / 2, y: height / 2 - 4 };
+    el("hub-layer").replaceChildren();
+    if (hubPoint) el("hub-layer").append(svg("rect", { x: hubPoint.x - 6, y: hubPoint.y - 6, width: 12, height: 12 }, "hub-point"));
+    el("map-empty").hidden = !geographic || Boolean(camera);
+    let unknown = 0; plotted = [];
+    for (const [index, node] of nodes.entries()) {
+      const record = records.get(node.id), place = locationOf(node);
+      const point = geographic ? place && camera ? G.position(place, camera) : null : { x: width / 2 + Math.cos(-Math.PI / 2 + index * 2 * Math.PI / nodes.length) * Math.min(width * .32, 170), y: height / 2 - 4 + Math.sin(-Math.PI / 2 + index * 2 * Math.PI / nodes.length) * Math.min(height * .32, 112) };
+      record.tag.hidden = !node.self || !point; record.edge.style.display = point && hubPoint ? "" : "none";
+      if (point) {
+        if (record.mark.parentElement !== el("marks")) el("marks").append(record.mark);
+        record.mark.className = "map-mark"; record.mark.style.left = point.x + "px"; record.mark.style.top = point.y + "px";
+        record.tag.style.left = point.x + "px"; record.tag.style.top = Math.min(height - 28, point.y + 16) + "px";
+        plotted.push({ ...point, id: node.id });
+        if (hubPoint) record.edge.setAttribute("d", geographic ? `M${hubPoint.x},${hubPoint.y} Q${hubPoint.x},${hubPoint.y + (point.y - hubPoint.y) * .55} ${point.x},${point.y}` : `M${hubPoint.x},${hubPoint.y} L${point.x},${point.y}`);
+      } else {
+        unknown++;
+        if (record.mark.parentElement !== el("unknown-nodes")) el("unknown-nodes").append(record.mark);
+        record.mark.className = "unknown-mark"; record.mark.style.removeProperty("left"); record.mark.style.removeProperty("top");
+      }
+    }
+    el("unknown-nodes").hidden = unknown === 0;
+    el("map-scale").hidden = !geographic || !camera;
+    if (camera) {
+      const km = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000].filter(value => value * camera.pixelsPerKm <= (width < 480 ? 54 : 80)).at(-1) || 1;
+      el("scale-line").style.inlineSize = km * camera.pixelsPerKm + "px"; text("scale-value", fmt(copy().approxScale, [km]));
+    }
+  }
+  function render() {
+    for (const node of app.querySelectorAll("[data-copy]")) node.textContent = copy()[node.dataset.copy];
+    el("view-toggle").setAttribute("aria-label", copy().viewLabel);
+    for (const button of app.querySelectorAll("[data-view]")) button.setAttribute("aria-pressed", String(button.dataset.view === view));
+    text("map-title", view === "geography" ? copy().mapTitle : copy().topologyTitle);
+    el("map-svg").setAttribute("aria-label", view === "geography" ? copy().mapDescription : copy().topologyDescription);
+    nodes = nodeList();
+    if (!nodes.some(node => node.id === selected)) selected = nodes[0]?.id || null;
+    if (!nodes.some(node => node.id === hovered)) hovered = null;
+    if (!nodes.some(node => node.id === focused)) focused = null;
+    prefillForm(); reconcileNodes(); renderBanner(); renderConnection(); renderEvents(); layout(); syncInteraction();
+    const unknown = nodes.some(node => !locationOf(node));
+    text("map-hint", view === "geography" && !hubLocation() ? copy().hubUnknown : view === "geography" && unknown ? copy().mapPartial : copy().hover);
+    // Label/locale changes do not alter the camera or marker positions.
+    if (view === "geography" && !el("map-scale").hidden) {
+      const km = el("scale-value").textContent.match(/[\d.]+/)?.[0]; if (km) text("scale-value", fmt(copy().approxScale, [km]));
+    }
+  }
+  socket.on(P.events.state, next => {
+    observationLost = false;
+    const nextKey = JSON.stringify([next.activeConfig?.url, next.activeConfig?.room, next.activeConfig?.nodeId]);
+    if (configurationKey && configurationKey !== nextKey) {
+      locationDirty = false; locationKey = ""; feedbackKey = "";
+      clearTimeout(locationTimer); locationRequest++; locationPending = false;
+      el("location-save").disabled = false; el("location-reset").disabled = false;
+    }
+    configurationKey = nextKey; state = next; render();
+  });
+  L.subscribe(render);
+  app.querySelectorAll("[data-view]").forEach(button => button.addEventListener("click", () => { view = button.dataset.view; render(); }));
+  el("map-stage").addEventListener("pointermove", event => { if (event.pointerType !== "touch") setHover(nearest(event)?.id || null); });
+  el("map-stage").addEventListener("pointerleave", () => setHover(null));
+  el("connection-form").addEventListener("submit", event => {
+    event.preventDefault(); const config = formConfig(); if (!socket.connected || observationLost || !config.url || !config.token) return;
+    try { localStorage.setItem(P.storageKeys.hubConfig, JSON.stringify(config)); } catch { /* Connection remains usable when browser storage is unavailable. */ }
     socket.emit(P.events.hubConfig, config);
-  }
-}
-
-// The room slot's two shapes (issue #15): an env room means the App
-// derived it ({project id}_{group}) — the input exits and a read-only
-// line shows the full name to verify against. The hidden input keeps
-// carrying the value, so submits and the connect button's dirty check
-// ride it exactly as before. No env room → the operator hand-fills,
-// unchanged since #3.
-function applyRoomDisplay(envRoom) {
-  const appPresent = Boolean(envRoom);
-
-  derivedRoomEl.textContent = envRoom || "";
-  derivedRoomEl.classList.toggle("hidden", !appPresent);
-  roomInput.classList.toggle("hidden", appPresent);
-}
-
-function submitConfig(save) {
-  const config = {
-    url: urlInput.value.trim(),
-    token: tokenInput.value.trim(),
-    room: roomInput.value.trim(),
-    nodeId: nodeInput.value.trim(),
-  };
-
-  if (!config.url || !config.token) {
-    return false;
-  }
-
-  if (save) {
-    localStorage.setItem(P.storageKeys.hubConfig, JSON.stringify(config));
-  }
-
-  // The submission is the session's intent from here on: a later
-  // socket reconnect re-sends IT, not the startup config (issue #15).
-  autoConfig = config;
-  socket.emit(P.events.hubConfig, config);
-  return true;
-}
-
-// ------------------------------------------------------------
-// Connect button state machine (#12)
-// ------------------------------------------------------------
-
-// The form-vs-live-config dirty check: trimmed values, exact string
-// compare — case-sensitive, no scheme/host normalization (a different
-// spelling is a different config). The one asymmetry is the two
-// server-applied defaults: an empty room means "default", and an empty
-// node name means "the server picks" — both compare clean against
-// whatever is actually live.
-function formMatchesActive(active) {
-  if (!active) {
-    return false;
-  }
-
-  return (
-    urlInput.value.trim() === active.url &&
-    tokenInput.value.trim() === active.token &&
-    (roomInput.value.trim() === active.room ||
-      (roomInput.value.trim() === "" && active.room === P.defaultRoom)) &&
-    (nodeInput.value.trim() === active.nodeId || nodeInput.value.trim() === "")
-  );
-}
-
-// Four states, from server truth alone (a page refresh or another
-// device renders the same button): 未连接 → 连接; submitted → first
-// connect → 连接中…; connected && form == activeConfig → 已连接;
-// connected && form ≠ activeConfig → 重新连接. Connected means the
-// TRANSPORT is up — a yellow or red metric never un-words「已连接」
-// (connection state ≠ health state).
-function renderConnectButton() {
-  const m = T().monitor;
-  const leg = state && state.leg ? state.leg : null;
-
-  let label = m.connect;
-  let disabled = false;
-
-  if (leg && !leg.connected && !leg.everConnected) {
-    label = m.connecting;
-    disabled = true;
-  } else if (leg && leg.connected && formMatchesActive(state.activeConfig)) {
-    label = m.connected;
-    disabled = true;
-  } else if (leg && leg.connected) {
-    label = m.reconnect;
-  }
-
-  connectButton.textContent = label;
-  connectButton.disabled = disabled;
-}
-
-// ------------------------------------------------------------
-// Rendering
-// ------------------------------------------------------------
-
-const statusClass = P.statusClass;
-const setStatus = P.setStatus;
-
-function leg() {
-  return state && state.leg ? state.leg : null;
-}
-
-function localState() {
-  return state && state.local ? state.local : null;
-}
-
-function ownName() {
-  return (
-    (state && state.activeConfig && state.activeConfig.nodeId) ||
-    T().monitor.ownFallback
-  );
-}
-
-function sortedPeers(info) {
-  return Object.entries(info.peers || {}).sort(([a], [b]) =>
-    a < b ? -1 : a > b ? 1 : 0,
-  );
-}
-
-function render() {
-  // The env prefill rides the state broadcast: the initial render at
-  // load runs BEFORE the first state arrives (state is null there)
-  // and must not spend prefillForm's once-guard on an empty env.
-  if (state) {
-    prefillForm(); // first state-bearing render only (guard inside)
-  }
-
-  // The chrome re-words on every render — including the ones a locale
-  // switch triggers, when nothing else changed.
-  const m = T().monitor;
-
-  chromeEls.sub.textContent = m.sub;
-  chromeEls.overallLabel.textContent = m.overallLabel;
-  chromeEls.formTitle.textContent = m.formTitle;
-  chromeEls.formUrl.textContent = m.formUrl;
-  chromeEls.formToken.textContent = m.formToken;
-  chromeEls.formRoom.textContent = m.formRoom;
-  chromeEls.formNode.textContent = m.formNode;
-  nodeInput.setAttribute("placeholder", m.formNodePlaceholder);
-  renderConnectButton();
-  chromeEls.formHint.textContent = m.formHint;
-  chromeEls.starHint.textContent = m.starHint;
-  chromeEls.localTitle.textContent = m.localTitle;
-  chromeEls.logTitle.textContent = m.logTitle;
-
-  for (const [id, value] of Object.entries({
-    "sites-label": m.sites,
-    "network-title": m.networkTitle,
-    "readings-title": m.readingsTitle,
-    "readings-note": m.readingsNote,
-    "local-note": m.localNote,
-    "footer-hint": m.footerHint,
-  }))
-    document.getElementById(id).textContent = value;
-  const info = leg();
-  const onlineSites = info
-    ? Number(Boolean(info.connected)) +
-      sortedPeers(info).filter(([, peer]) => peer.connected).length
-    : 0;
-  document.getElementById("site-count").textContent = String(
-    onlineSites,
-  ).padStart(2, "0");
-  renderBanner();
-  renderStar();
-  renderLocal();
-  renderCards();
-  renderLog();
-}
-
-// The reason line: a key from the wire mapped through the current
-// locale's table (params fill the {0}/{1} placeholders). An unknown
-// key — e.g. prose relayed by a peer still on an older release —
-// renders verbatim, never blank.
-function reasonLine(key, params, table) {
-  if (!key) {
-    return "";
-  }
-
-  const template = table[key];
-  return template === undefined ? key : fmt(template, params);
-}
-
-function renderBanner() {
-  const t = T();
-  const overall = state ? state.overall : null;
-  const status = overall ? overall.status : "idle";
-
-  setStatus(bannerEl, status);
-  bannerCopyEl.textContent = t.overall[status] || "";
-
-  // Plain attribution copy: which site's which leg is the problem —
-  // hub (公网腿) or local (本地腿). Yellow softens the wording; red
-  // blames outright. One template per leg/verb/self combination, {node}
-  // filled with the peer's id.
-  bannerAttributionEl.textContent = "";
-
-  if (
-    overall &&
-    overall.attributionNodeId &&
-    (status === "red" || status === "yellow")
-  ) {
-    const legWord = overall.attributionLeg === "local" ? "Local" : "Hub";
-    // The template keys carry the status capitalized ("Red" /
-    // "Yellow") and the self variant unprefixed.
-    const statusWord = status.charAt(0).toUpperCase() + status.slice(1);
-    const key =
-      "attrib" + (overall.attributionSelf ? "Self" : "") + legWord + statusWord;
-
-    bannerAttributionEl.textContent = fmt(t.monitor[key] || "", {
-      node: overall.attributionNodeId,
-    });
-  }
-}
-
-// The star diagram: hub centered, own node + peers ringed. Rebuilt on
-// every state (a handful of nodes — rebuilding beats diffing).
-function renderStar() {
-  starEl.textContent = "";
-
-  const info = leg();
-
-  if (!info) {
-    starEl.append(el("div", "hint", T().monitor.starNotConnected));
-    return;
-  }
-
-  const nodes = [
-    {
-      name: ownName(),
-      self: true,
-      status: info.status,
-      connected: info.connected,
-      p50: info.summary ? info.summary.rttP50 : null,
-      // The own site's local-leg worst (null = no performer yet → the
-      // outer ring stays gray).
-      localWorst: localState() ? localState().status : null,
-    },
-  ];
-
-  for (const [nodeId, peer] of sortedPeers(info)) {
-    nodes.push({
-      name: nodeId,
-      self: false,
-      status: peer.status, // snapshot already coerced offline → red
-      connected: peer.connected,
-      p50: peer.summary ? peer.summary.rttP50 : null,
-      localWorst: peer.local ? peer.local.status : null,
-    });
-  }
-
-  const size = 360;
-  const center = size / 2;
-  const radius = 118;
-  const svg = svgEl("svg", {
-    viewBox: "0 0 " + size + " " + size,
   });
-  svg.setAttribute("class", "star-svg");
-  svg.setAttribute("role", "img");
-  svg.setAttribute("aria-label", T().monitor.starHint);
-
-  // Hub first (spokes draw over it).
-  const hubCore = svgEl("circle", { cx: center, cy: center, r: 15 });
-  hubCore.setAttribute("class", "hub-core");
-  svg.append(hubCore, svgText(center, center + 33, "HUB", "hub-label"));
-
-  nodes.forEach((node, index) => {
-    const angle = -Math.PI / 2 + (index * 2 * Math.PI) / nodes.length;
-    const x = center + radius * Math.cos(angle);
-    const y = center + radius * Math.sin(angle);
-
-    // Spoke: quality color; dashed when the node's leg is offline.
-    const spoke = svgEl("line", {
-      x1: center,
-      y1: center,
-      x2: x,
-      y2: y,
-    });
-
-    spoke.setAttribute("class", "spoke " + statusClass(node.status));
-
-    if (!node.connected) {
-      spoke.setAttribute("stroke-dasharray", "7 6");
-    }
-
-    svg.append(spoke);
-
-    // Spoke label: the self-reported RTT p50 — a number, never
-    // colored. Offline peers show "—": the last relayed number must
-    // not read as a live estimate on a broken leg.
-    const label = svgText(
-      (center + x) / 2,
-      (center + y) / 2 - 7,
-      node.connected && Number.isFinite(node.p50)
-        ? Math.round(node.p50) + " ms"
-        : "—",
-      "spoke-label",
-    );
-
-    label.setAttribute("text-anchor", "middle");
-    svg.append(label);
-
-    // Node: outer ring = the site's local-leg worst (gray = no data),
-    // inner dot = hub-leg quality.
-    const ring = svgEl("circle", { cx: x, cy: y, r: 17 });
-    ring.setAttribute(
-      "class",
-      "node-ring " + statusClass(node.localWorst || "gray"),
-    );
-    const core = svgEl("circle", { cx: x, cy: y, r: 8 });
-    core.setAttribute("class", "node-core " + statusClass(node.status));
-    svg.append(ring, core);
-
-    const nameLabel = svgText(x, y + 35, node.name, "node-name");
-
-    nameLabel.setAttribute("text-anchor", "middle");
-    svg.append(nameLabel);
-
-    if (node.self) {
-      const badge = svgText(x, y - 27, T().monitor.selfBadge, "self-badge");
-
-      badge.setAttribute("text-anchor", "middle");
-      svg.append(badge);
-    }
+  for (const input of el("connection-form").querySelectorAll("input")) input.addEventListener("input", renderConnect);
+  el("retry").addEventListener("click", () => { if (socket.connected && !observationLost && state?.activeConfig) socket.emit(P.events.hubConfig, { ...state.activeConfig }); });
+  for (const input of el("location-form").querySelectorAll("input")) input.addEventListener("input", () => { locationDirty = true; feedbackKey = ""; text("location-feedback", ""); });
+  function finishLocation(request, value, result) {
+    if (request !== locationRequest || !locationPending) return;
+    clearTimeout(locationTimer); locationPending = false;
+    el("location-save").disabled = false; el("location-reset").disabled = false;
+    feedbackKey = result?.ok ? value ? "locationSaved" : "locationReset" : "locationFailed";
+    if (result?.ok) { locationDirty = false; locationKey = ""; }
+    updateDetail();
+  }
+  function applyLocation(value) {
+    if (locationPending) return;
+    if (!socket.connected || observationLost) { feedbackKey = "locationFailed"; text("location-feedback", copy()[feedbackKey]); return; }
+    const request = ++locationRequest;
+    locationPending = true; feedbackKey = "locationSaving"; text("location-feedback", copy()[feedbackKey]);
+    el("location-save").disabled = true; el("location-reset").disabled = true;
+    locationTimer = setTimeout(() => finishLocation(request, value, { ok: false }), 5000);
+    // The synchronous connected/fresh-state guard prevents offline queueing.
+    // Keep reliable delivery while connected; timeout releases a missing ACK.
+    socket.timeout(5000).emit(P.events.setLocation, value, (error, result) => finishLocation(request, value, error ? { ok: false } : result));
+  }
+  socket.on("disconnect", () => {
+    observationLost = true; finishLocation(locationRequest, null, { ok: false }); render();
   });
-
-  starEl.append(svg);
-}
-
-// The card grid: own card first, then one per peer (name order).
-function renderCards() {
-  cardsEl.textContent = "";
-
-  const info = leg();
-
-  if (!info) {
-    return;
-  }
-
-  cardsEl.append(renderOwnCard(ownName(), info));
-
-  for (const [nodeId, peer] of sortedPeers(info)) {
-    cardsEl.append(renderPeerCard(nodeId, peer, info));
-  }
-}
-
-function renderOwnCard(name, info) {
-  const t = T();
-  const card = el("div", "client-card " + statusClass(info.status));
-  const head = el("div", "head");
-  const local = localState();
-  const localStatus = local ? local.status : null;
-
-  head.append(
-    el("span", "dot on"),
-    // Name only — no card carries a phase marker (#11); probing stays
-    // on the wire, it just has nothing to paint (see the note above
-    // renderPerformerCard for why).
-    el("span", "node-name-label", name),
-    el("span", "tag", t.monitor.selfTag),
-    el("span", "status-word", statusWord(info.status)),
-  );
-  card.append(
-    head,
-    el("div", "copy", t.hubStatus[info.status] || ""),
-    el(
-      "div",
-      "reason",
-      reasonLine(info.reason, info.reasonParams, t.hubReasons),
-    ),
-  );
-
-  const rows = el("div", "rows");
-  const summary = info.summary || {};
-
-  rows.append(
-    metricRow(t.monitor.rttP50, formatMs(summary.rttP50)),
-    metricRow(t.monitor.rttP95, formatMs(summary.rttP95)),
-    metricRow(t.monitor.oneWay, formatMs(summary.oneWayEstimateMs, 1)),
-    metricRow(t.monitor.jitterIqr, formatMs(summary.iqrMs, 1)),
-    metricRow(t.monitor.loss, formatPct(summary.lossRate)),
-    metricRow(t.monitor.performers, String(local ? local.performers : 0)),
-    metricRow(
-      t.monitor.localLeg,
-      localStatus ? statusWord(localStatus) : t.monitor.noData,
-    ),
-  );
-  card.append(rows);
-
-  return card;
-}
-
-function renderPeerCard(nodeId, peer, own) {
-  const t = T();
-  const status = peer.status; // snapshot already coerced offline → red
-  const card = el("div", "client-card " + statusClass(status));
-  const head = el("div", "head");
-
-  head.append(
-    el("span", "dot on"),
-    el("span", "node-name-label", nodeId),
-    el("span", "status-word", statusWord(status)),
-  );
-  card.append(
-    head,
-    el("div", "copy", t.hubStatus[status] || ""),
-    el(
-      "div",
-      "reason",
-      peer.connected
-        ? reasonLine(peer.reason, peer.reasonParams, t.hubReasons)
-        : reasonLine("unreachable", [], t.hubReasons),
-    ),
-  );
-
-  const summary = peer.summary || {};
-
-  // The DERIVED site-pair number: this site → that site ≈ two hub-leg
-  // p50s. Big number, small composition formula (parent #1: 推导值,
-  // 大数字 + 小字构成式). Null while either segment is unmeasured.
-  // The derived blocks. A disconnected peer shows "—": an estimate
-  // built from its last relay (up to 30 s old) must not read as live
-  // on a leg the diagram itself draws as broken.
-  const ownP50 = own.summary ? own.summary.rttP50 : null;
-  const peerP50 = summary.rttP50;
-  const total = peer.connected ? P.derivedSitePair(ownP50, peerP50) : null;
-
-  const siteBlock = el("div", "derived");
-
-  siteBlock.append(el("div", "derived-k", t.monitor.sitePair));
-
-  if (total !== null) {
-    siteBlock.append(
-      el("div", "big", "≈ " + Math.round(total) + " ms"),
-      el(
-        "div",
-        "formula",
-        ownName() +
-          " → " +
-          nodeId +
-          " · " +
-          Math.round(ownP50) +
-          " + " +
-          Math.round(peerP50) +
-          " ms",
-      ),
-    );
-  } else {
-    siteBlock.append(
-      el("div", "big", "—"),
-      el(
-        "div",
-        "formula",
-        peer.connected ? t.monitor.waitSite : t.monitor.peerUnreachable,
-      ),
-    );
-  }
-
-  card.append(siteBlock);
-
-  // Performer pair = local + hub + hub + local — four segments, both
-  // local p50s being the sites' worst-online-performer medians. Null
-  // while any segment is unmeasured; a disconnected peer shows "—"
-  // (same rule as the site pair).
-  const ownLocalP50 = localState() ? localState().p50 : null;
-  const peerLocalP50 = peer.local ? peer.local.p50 : null;
-  const perfTotal = peer.connected
-    ? P.derivedPerformerPair(ownLocalP50, ownP50, peerP50, peerLocalP50)
-    : null;
-
-  const perfBlock = el("div", "derived");
-
-  perfBlock.append(el("div", "derived-k", t.monitor.perfPair));
-
-  if (perfTotal !== null) {
-    perfBlock.append(
-      el("div", "big", "≈ " + Math.round(perfTotal) + " ms"),
-      el(
-        "div",
-        "formula",
-        t.monitor.segLocal +
-          " " +
-          Math.round(ownLocalP50) +
-          " + " +
-          t.monitor.segHub +
-          " " +
-          Math.round(ownP50) +
-          " + " +
-          t.monitor.segHub +
-          " " +
-          Math.round(peerP50) +
-          " + " +
-          t.monitor.segLocal +
-          " " +
-          Math.round(peerLocalP50) +
-          " ms",
-      ),
-    );
-  } else {
-    perfBlock.append(
-      el("div", "big", "—"),
-      el(
-        "div",
-        "formula",
-        peer.connected ? t.monitor.waitPerf : t.monitor.peerUnreachable,
-      ),
-    );
-  }
-
-  card.append(perfBlock);
-
-  const rows = el("div", "rows");
-
-  rows.append(
-    metricRow(t.monitor.rttP50, formatMs(summary.rttP50)),
-    metricRow(t.monitor.rttP95, formatMs(summary.rttP95)),
-    metricRow(
-      t.monitor.performers,
-      String(peer.local ? peer.local.performers : 0),
-    ),
-    metricRow(
-      t.monitor.localLeg,
-      peer.local && peer.local.status
-        ? statusWord(peer.local.status)
-        : t.monitor.noData,
-    ),
-  );
-  card.append(rows);
-
-  return card;
-}
-
-// The local panel: THIS site's performers, one compact card each —
-// status (LND rules: latency participates on a LAN), metrics, and the
-// per-performer event log (connected / disconnected / reconnected).
-// Site-level events (a deletion — the performer's voluntary exit #10
-// or the monitor's「x」#13 — deletes the card, so the trail lives here
-// instead) render as one muted line under the cards.
-function renderLocal() {
-  const local = localState();
-  const entries = Object.entries(local?.clients || {}).sort(
-    ([a], [b]) => Number(a) - Number(b),
-  );
-  const ids = new Set(entries.map(([id]) => id));
-  for (const [id, card] of performerCards) {
-    if (!ids.has(id)) {
-      const wasFocused = card.contains(document.activeElement);
-      card.remove();
-      performerCards.delete(id);
-      if (wasFocused) document.getElementById("local-title").focus();
-    }
-  }
-  localCountEl.textContent =
-    entries.length > 0 ? fmt(T().monitor.countOnline, [local.performers]) : "";
-  localEmpty.textContent = T().monitor.emptyLocal;
-  if (entries.length === 0) {
-    if (!localEmpty.parentNode) localCardsEl.append(localEmpty);
-  } else localEmpty.remove();
-  entries.forEach(([id, client], index) => {
-    let card = performerCards.get(id);
-    if (!card) {
-      card = renderPerformerCard(id, client);
-      performerCards.set(id, card);
-    } else {
-      updatePerformerCard(card, id, client);
-    }
-    const position = localCardsEl.children[index];
-    if (position !== card) localCardsEl.insertBefore(card, position || null);
+  el("location-form").addEventListener("submit", event => {
+    event.preventDefault();
+    const label = el("location-label").value.trim(), latitudeText = el("location-latitude").value.trim(), longitudeText = el("location-longitude").value.trim();
+    const value = { label, latitude: Number(latitudeText), longitude: Number(longitudeText) };
+    if (!latitudeText || !longitudeText || !G.validLocation(value)) { feedbackKey = "locationInvalid"; text("location-feedback", copy()[feedbackKey]); return; }
+    applyLocation(value);
   });
-  // Empty copy and site trail live after the keyed cards, never inside one.
-  localEvents.textContent = eventsLineText(
-    local?.events || [],
-    localEventLabel,
-  );
-  if (local?.events?.length) {
-    if (!localEvents.parentNode) localCardsEl.append(localEvents);
-  } else localEvents.remove();
-}
-
-// The compact "label · ago" trail the performer cards and the
-// site-level line both render from — newest first, last three.
-function eventsLineText(events, labelFor) {
-  return events
-    .slice(-3)
-    .reverse()
-    .map((event) => labelFor(event) + " " + agoText(event.agoMs))
-    .join(" · ");
-}
-
-// No card anywhere carries a burst/calm marker (#11): the numbers are
-// load-scoped (burst samples only, steady across the cycle), so a
-// phase marker would only flicker every 2 s — and the phase itself is
-// the measurement's business, not the operator's.
-function renderPerformerCard(id, client) {
-  const card = el("div", "client-card");
-  const head = el("div", "head");
-  const removeButton = el("button", "remove-btn", "×");
-  removeButton.type = "button";
-  removeButton.addEventListener("click", () =>
-    socket.emit(P.events.remove, { id: Number(id) }),
-  );
-  head.append(
-    el("span", "dot on"),
-    el("span", "client-name"),
-    el("span", "status-word"),
-    removeButton,
-  );
-  card.append(
-    head,
-    el("div", "copy"),
-    el("div", "reason"),
-    el("div", "rows"),
-    el("div", "events-line"),
-  );
-  card.setAttribute("data-client-id", id);
-  updatePerformerCard(card, id, client);
-  return card;
-}
-
-function updatePerformerCard(card, id, client) {
-  const t = T();
-  const [head, copy, reason, rows, events] = card.children;
-  card.className = "client-card " + statusClass(client.status);
-  head.children[1].textContent = fmt(t.monitor.performer, [id]);
-  head.children[2].textContent = client.connected
-    ? statusWord(client.status)
-    : t.monitor.offline;
-  head.children[3].setAttribute("aria-label", t.monitor.remove);
-  copy.textContent = t.localStatus[client.status] || "";
-  reason.textContent = reasonLine(
-    client.connected ? client.reason : "disconnected",
-    null,
-    t.localReasons,
-  );
-  const metrics = client.metrics || {};
-  rows.textContent = "";
-  rows.append(
-    metricRow(t.monitor.rttP50, formatMs(metrics.rttP50)),
-    metricRow(t.monitor.rttP95, formatMs(metrics.rttP95)),
-    metricRow(t.monitor.jitterP95, formatMs(metrics.jitterP95)),
-    metricRow(t.monitor.loss, formatPct(metrics.lossRate)),
-  );
-  events.textContent = eventsLineText(client.events || [], (event) =>
-    eventLabel(event.type),
-  );
-  events.hidden = !client.events?.length;
-}
-
-function renderLog() {
-  const t = T();
-
-  logEl.textContent = "";
-  const info = leg();
-  const events = info ? info.events || [] : [];
-
-  if (events.length === 0) {
-    logEl.append(el("div", "entry", t.monitor.noEvents));
-    return;
-  }
-
-  for (const event of events.slice(-8).reverse()) {
-    const entry = el("div", "entry");
-    const type = el("b", null, eventLabel(event.type));
-
-    entry.append(
-      type,
-      document.createTextNode(
-        (event.detail ? " — " + detailText(event.detail) : "") +
-          "  ·  " +
-          agoText(event.agoMs),
-      ),
-    );
-    logEl.append(entry);
-  }
-}
-
-// ------------------------------------------------------------
-// Helpers
-// ------------------------------------------------------------
-
-function el(tag, className, text) {
-  const node = document.createElement(tag);
-  if (className) {
-    node.className = className;
-  }
-  if (text !== undefined) {
-    node.textContent = text;
-  }
-  return node;
-}
-
-function svgEl(tag, attributes) {
-  const node = document.createElementNS(SVG_NS, tag);
-
-  for (const name of Object.keys(attributes || {})) {
-    node.setAttribute(name, attributes[name]);
-  }
-
-  return node;
-}
-
-function svgText(x, y, text, className) {
-  const node = svgEl("text", { x, y });
-  node.setAttribute("class", className);
-  node.textContent = text;
-  return node;
-}
-
-function metricRow(label, value) {
-  const row = el("div", "row");
-  row.append(el("span", "k", label), el("span", "v", value));
-  return row;
-}
-
-function statusWord(status) {
-  return T().monitor.statusWord[status] || status || T().monitor.noData;
-}
-
-function formatMs(value, digits = 0) {
-  return Number.isFinite(value) ? value.toFixed(digits) + " ms" : "—";
-}
-
-function formatPct(value) {
-  return Number.isFinite(value) ? (value * 100).toFixed(1) + "%" : "—";
-}
-
-function eventLabel(type) {
-  const t = T();
-
-  return t.events[type] || type.charAt(0).toUpperCase() + type.slice(1);
-}
-
-// Site-level local events name their client: the copy template carries
-// a {0} slot ("client {0} 退出（performer）") filled with the id.
-function localEventLabel(event) {
-  const template = T().events[event.type];
-
-  return template === undefined
-    ? eventLabel(event.type)
-    : fmt(template, [event.client]);
-}
-
-// Event details the server itself words carry a key mapped through
-// the table; external diagnostics (socket.io reasons, error messages)
-// stay verbatim.
-function detailText(detail) {
-  return T().eventDetails[detail] || detail;
-}
-
-function agoText(agoMs) {
-  const t = T();
-
-  if (typeof agoMs !== "number") {
-    return "";
-  }
-
-  if (agoMs < 1000) {
-    return t.ago.just;
-  }
-
-  if (agoMs < 60000) {
-    return Math.round(agoMs / 1000) + t.ago.seconds;
-  }
-
-  return Math.round(agoMs / 60000) + t.ago.minutes;
-}
-
-render();
+  el("location-reset").addEventListener("click", () => applyLocation(null));
+  new ResizeObserver(layout).observe(el("map-stage"));
+  render();
+})();
